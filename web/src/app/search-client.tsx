@@ -10,10 +10,51 @@ type ChatMessage = {
   content: string;
 };
 
+type RequiredSurveyField =
+  | "age"
+  | "location"
+  | "languages"
+  | "work_authorization"
+  | "educational_level"
+  | "favorite_skill"
+  | "years_experience_total"
+  | "skill_confidence"
+  | "informal_experience"
+  | "demonstrated_competencies";
+
 type SurveyData = {
   age: number | null;
-  city: string;
+  location: string;
+  languages: string[];
+  work_authorization: string;
+  availability: string;
+  work_mode_preference: string;
+  educational_level: string;
+  target_outcome: string;
+  target_roles: string[];
+  target_industries: string[];
+  time_horizon: string;
+  priority_tradeoff: string;
+  favorite_skill: string;
+  current_role_title: string;
+  current_industry: string;
+  years_experience_total: string;
+  years_experience_domain: string;
+  skill_confidence: string;
+  seniority_level: string;
+  team_lead_experience: string;
+  key_responsibilities: string[];
+  informal_experience: string;
+  demonstrated_competencies: string[];
   skills: string[];
+};
+
+type IntakeAnalysis = SurveyData & {
+  missing_fields: RequiredSurveyField[];
+  assistant_message: string;
+  user_requested_result: boolean;
+  ready_to_generate: boolean;
+  error?: string;
 };
 
 type CalculationStage = "idle" | "collected" | "extracting" | "grounding" | "done";
@@ -107,12 +148,33 @@ type SkillProfile = {
 
 const emptySurveyData: SurveyData = {
   age: null,
-  city: "",
+  location: "",
+  languages: [],
+  work_authorization: "",
+  availability: "",
+  work_mode_preference: "",
+  educational_level: "",
+  target_outcome: "",
+  target_roles: [],
+  target_industries: [],
+  time_horizon: "",
+  priority_tradeoff: "",
+  favorite_skill: "",
+  current_role_title: "",
+  current_industry: "",
+  years_experience_total: "",
+  years_experience_domain: "",
+  skill_confidence: "",
+  seniority_level: "",
+  team_lead_experience: "",
+  key_responsibilities: [],
+  informal_experience: "",
+  demonstrated_competencies: [],
   skills: [],
 };
 
 const firstSurveyPrompt =
-  "Hi. I can build your portable skills profile. For this prototype I need three things: your age, your city, and the skills you want mapped. You can answer in one message, like: I am 22, I live in Accra, and my skills are phone repair, customer service, and basic coding.";
+  "Hi. What kind of work would you enjoy, and what have you done before? Share anything useful; I will ask only for what is missing.";
 
 const amaraDemoMessages: ChatMessage[] = [
   {
@@ -122,13 +184,45 @@ const amaraDemoMessages: ChatMessage[] = [
   {
     role: "user",
     content:
-      "I am 22 and live outside Accra. My skills are phone repair, diagnosing charging problems, replacing screens, customer communication, keeping records of parts and payments, and basic HTML and JavaScript coding.",
+      "I am 22 and live outside Accra in Ghana. I speak English fluently and Twi conversationally. I can work locally and remotely. I finished senior high school. I have 2 years of hands-on repair experience. My most fun skill is phone repair. I feel confident with phone repair 4 out of 5. I helped family and neighbors fix phones informally, and I can show that I diagnosed charging problems, replaced screens, talked to customers, kept records of parts and payments, and wrote basic HTML and JavaScript.",
   },
 ];
 
 const amaraSurveyData: SurveyData = {
   age: 22,
-  city: "Accra",
+  location: "Accra, Ghana",
+  languages: ["English fluent", "Twi conversational"],
+  work_authorization: "Can work locally and remotely",
+  availability: "",
+  work_mode_preference: "local or remote",
+  educational_level: "senior high school",
+  target_outcome: "",
+  target_roles: [],
+  target_industries: [],
+  time_horizon: "",
+  priority_tradeoff: "",
+  favorite_skill: "phone repair",
+  current_role_title: "",
+  current_industry: "repair services",
+  years_experience_total: "2 years",
+  years_experience_domain: "2 years in phone repair",
+  skill_confidence: "phone repair 4/5",
+  seniority_level: "",
+  team_lead_experience: "",
+  key_responsibilities: [
+    "diagnosing charging problems",
+    "replacing screens",
+    "customer communication",
+    "keeping records of parts and payments",
+  ],
+  informal_experience: "helped family and neighbors fix phones informally",
+  demonstrated_competencies: [
+    "diagnosing charging problems",
+    "replacing screens",
+    "customer communication",
+    "keeping records of parts and payments",
+    "basic HTML and JavaScript coding",
+  ],
   skills: [
     "phone repair",
     "diagnosing charging problems",
@@ -139,297 +233,105 @@ const amaraSurveyData: SurveyData = {
   ],
 };
 
-const intakeSeparators = /[,;\n]+/;
-const validAgeRange = { min: 10, max: 80 };
+const requiredFieldLabels: Record<RequiredSurveyField, string> = {
+  age: "Age",
+  location: "Location",
+  languages: "Languages",
+  work_authorization: "Work authorization",
+  educational_level: "Education",
+  favorite_skill: "Favorite skill",
+  years_experience_total: "Experience",
+  skill_confidence: "Skill confidence",
+  informal_experience: "Informal experience",
+  demonstrated_competencies: "Demonstrated competencies",
+};
 
-function cleanFreeText(value: string) {
-  return value
-    .trim()
-    .replace(/^[\s:=-]+/, "")
-    .replace(/[\s.,;:=-]+$/, "")
-    .replace(/\s+/g, " ");
-}
+const requiredFieldKeys: RequiredSurveyField[] = [
+  "age",
+  "location",
+  "languages",
+  "work_authorization",
+  "educational_level",
+  "favorite_skill",
+  "years_experience_total",
+  "skill_confidence",
+  "informal_experience",
+  "demonstrated_competencies",
+];
 
-function formatCity(value: string) {
-  const cleaned = cleanFreeText(value)
-    .replace(/\s+(?:and\s+)?(?:my\s+)?skills\b.*$/i, "")
-    .replace(/\s+(?:and\s+)?(?:i\s+am|i'm|im|age|aged)\b.*$/i, "");
-
-  if (!cleaned) return "";
-
-  if (cleaned === cleaned.toLowerCase() || cleaned === cleaned.toUpperCase()) {
-    return cleaned.replace(/\b[A-Za-z]/g, (letter) => letter.toUpperCase());
-  }
-
-  return cleaned;
-}
-
-function splitMessageParts(value: string) {
-  return value.split(intakeSeparators).map(cleanFreeText).filter(Boolean);
-}
-
-function parseAge(value: string) {
-  const age = Number(value);
-
-  if (
-    Number.isFinite(age) &&
-    age >= validAgeRange.min &&
-    age <= validAgeRange.max
-  ) {
-    return age;
-  }
-
-  return null;
-}
-
-function ageFromMatch(match: RegExpMatchArray | null) {
-  return match ? parseAge(match[1]) : null;
-}
-
-function ageFromPart(part: string) {
-  return ageFromMatch(
-    part.match(
-      /^(?:age|aged)?\s*[:=-]?\s*(\d{1,2})(?:\s*(?:years old|year old|yo|y\/o))?$/i,
-    ),
-  );
-}
-
-function extractAge(message: string, parts: string[]) {
-  const explicitAge =
-    ageFromMatch(
-      message.match(
-        /\b(?:i am|i'm|im|age is|aged|age|am)\s*[:=-]?\s*(\d{1,2})\b/i,
-      ),
-    ) ||
-    ageFromMatch(
-      message.match(/\b(\d{1,2})\s*(?:years old|year old|yo|y\/o)\b/i),
-    );
-
-  if (explicitAge) return explicitAge;
-
-  for (const part of parts) {
-    const partAge = ageFromPart(part);
-    if (partAge) return partAge;
-  }
-
-  return null;
-}
-
-function cityFromPart(part: string) {
-  const labelledCity = part.match(
-    /^(?:city|location)\s*(?:is|:|=|-)?\s+([A-Za-z][A-Za-z\s-]{1,40})$/i,
-  );
-
-  if (labelledCity) {
-    return formatCity(labelledCity[1]);
-  }
-
-  if (
-    /^[A-Za-z][A-Za-z\s-]{1,40}$/.test(part) &&
-    !/^(?:age|aged|skills?)\b/i.test(part)
-  ) {
-    return formatCity(part);
-  }
-
-  return "";
-}
-
-function extractExplicitCity(message: string) {
-  const cityMatch = message.match(
-    /\b(?:live\s+(?:in|near|outside)|living\s+(?:in|near|outside)|based\s+in|from|outside|near|city|location)\s*(?:is|:|=|-)?\s+([A-Za-z][A-Za-z\s-]{1,40}?)(?=\s*(?:[,.;\n]|\band\s+(?:i\s+am|i'm|im|age|aged|my\s+skills|skills)\b|\b(?:age|aged|my\s+skills|skills)\b|$))/i,
-  );
-
-  return cityMatch ? formatCity(cityMatch[1]) : "";
-}
-
-function inferCityFromParts(
-  parts: string[],
-  age: number | null,
-  missingBefore: string[],
-) {
-  for (const part of parts) {
-    const labelledCity = part.match(
-      /^(?:city|location)\s*(?:is|:|=|-)?\s+([A-Za-z][A-Za-z\s-]{1,40})$/i,
-    );
-
-    if (labelledCity) return formatCity(labelledCity[1]);
-  }
-
-  if (missingBefore[0] === "city" && parts.length === 1) {
-    return cityFromPart(parts[0]);
-  }
-
-  if (!age || parts.length < 3) return "";
-
-  const ageIndex = parts.findIndex((part) => ageFromPart(part) === age);
-  const cityCandidates = parts
-    .map((part, index) => ({ index, value: cityFromPart(part) }))
-    .filter((part) => part.value);
-
-  return (
-    cityCandidates.find((part) => part.index < ageIndex)?.value ||
-    cityCandidates.find((part) => part.index > ageIndex)?.value ||
-    cityCandidates[0]?.value ||
-    ""
-  );
-}
-
-function stripSkillPrefix(value: string) {
-  return cleanFreeText(value)
-    .replace(
-      /^(?:my\s+)?skills(?:\s+(?:are|include|includes|is))?\s*[:=-]?\s*/i,
-      "",
-    )
-    .replace(/^(?:i\s+can|i\s+know\s+how\s+to|i\s+know|good\s+at)\s+/i, "")
-    .trim();
-}
-
-function splitSkills(value: string) {
-  return value
-    .replace(/\b(?:and|plus|also)\b/gi, ",")
-    .split(intakeSeparators)
-    .map(stripSkillPrefix)
-    .filter(
-      (skill) =>
-        skill.length > 1 &&
-        !/^(?:age|aged|city|location)\b/i.test(skill) &&
-        ageFromPart(skill) === null,
-    );
-}
-
-function mergeSkills(current: string[], incoming: string[]) {
-  const seen = new Set(current.map((skill) => skill.toLowerCase()));
-  const merged = [...current];
-
-  for (const skill of incoming) {
-    const key = skill.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(skill);
-    }
-  }
-
-  return merged;
-}
-
-function extractExplicitSkills(message: string) {
-  const skillsMatch =
-    message.match(
-      /\b(?:my\s+)?skills(?:\s+(?:are|include|includes|is))?\s*[:=-]?\s+(.+)$/i,
-    ) ||
-    message.match(/\b(?:i can|i know how to|i know|good at)\s+(.+)$/i);
-
-  return skillsMatch ? splitSkills(skillsMatch[1]) : [];
-}
-
-function inferSkillsFromParts(
-  parts: string[],
-  age: number | null,
-  city: string,
-) {
-  const cityKey = city.toLowerCase();
-
-  return parts
-    .filter((part) => age === null || ageFromPart(part) !== age)
-    .map((part) => {
-      const cityPart = cityFromPart(part).toLowerCase();
-
-      if (cityKey && cityPart === cityKey) return "";
-      if (/^(?:city|location)\b/i.test(part)) return "";
-
-      return stripSkillPrefix(part);
-    })
-    .filter(
-      (skill) =>
-        skill.length > 1 &&
-        skill.toLowerCase() !== cityKey &&
-        !/^(?:age|aged|city|location)\b/i.test(skill) &&
-        ageFromPart(skill) === null,
-    );
-}
-
-function extractSurveyData(message: string, current: SurveyData): SurveyData {
-  const missingBefore = missingSurveyFields(current);
-  const trimmedMessage = message.trim();
-  const parts = splitMessageParts(message);
-  const incomingAge = extractAge(message, parts);
-
-  const next: SurveyData = {
-    age: current.age,
-    city: current.city,
-    skills: [...current.skills],
-  };
-
-  if (!next.age && incomingAge) {
-    next.age = incomingAge;
-  }
-
-  const incomingCity =
-    extractExplicitCity(message) ||
-    inferCityFromParts(parts, next.age, missingBefore);
-
-  if (!next.city && incomingCity) {
-    next.city = incomingCity;
-  } else if (
-    !next.city &&
-    missingBefore[0] === "city" &&
-    /^[A-Za-z][A-Za-z\s-]{1,40}$/.test(trimmedMessage)
-  ) {
-    next.city = formatCity(trimmedMessage);
-  }
-
-  const explicitSkills = extractExplicitSkills(message);
-  const inferredSkills =
-    explicitSkills.length > 0
-      ? explicitSkills
-      : inferSkillsFromParts(parts, next.age, next.city);
-
-  if (inferredSkills.length > 0) {
-    next.skills = mergeSkills(next.skills, inferredSkills);
-  } else if (
-    next.skills.length === 0 &&
-    missingBefore[0] === "skills" &&
-    trimmedMessage.length > 1
-  ) {
-    next.skills = splitSkills(trimmedMessage);
-  }
-
-  return next;
-}
-
-function missingSurveyFields(data: SurveyData) {
+function missingSurveyFields(data: SurveyData): RequiredSurveyField[] {
   return [
     !data.age ? "age" : "",
-    !data.city ? "city" : "",
-    data.skills.length === 0 ? "skills" : "",
-  ].filter(Boolean);
+    !data.location ? "location" : "",
+    (data.languages?.length ?? 0) === 0 ? "languages" : "",
+    !data.work_authorization ? "work_authorization" : "",
+    !data.educational_level ? "educational_level" : "",
+    !data.favorite_skill ? "favorite_skill" : "",
+    !data.years_experience_total ? "years_experience_total" : "",
+    !data.skill_confidence ? "skill_confidence" : "",
+    !data.informal_experience ? "informal_experience" : "",
+    (data.demonstrated_competencies?.length ?? 0) === 0
+      ? "demonstrated_competencies"
+      : "",
+  ].filter(Boolean) as RequiredSurveyField[];
 }
 
 function promptForMissingFields(data: SurveyData) {
   const missing = missingSurveyFields(data);
 
   if (missing.length === 0) {
-    return "Thanks. I have your age, city, and skills. I am generating the analysis now.";
+    return "Thanks. I have the important intake data. I am generating the analysis now.";
   }
 
-  return `Thanks. I still need your ${missing.join(
-    ", ",
-  )}. Please send ${missing.length === 1 ? "it" : "them"} in the chat.`;
+  return `Thanks. I still need: ${missing
+    .slice(0, 3)
+    .map((field) => requiredFieldLabels[field])
+    .join(", ")}.`;
 }
 
 function messagesForProfile(messages: ChatMessage[], data: SurveyData) {
-  const skillsText = data.skills.join(", ");
+  const skillsText = (data.skills ?? []).join(", ");
+  const competenciesText = (data.demonstrated_competencies ?? []).join(", ");
 
   return [
     ...messages,
     {
       role: "assistant" as const,
       content:
-        "Structured profile intake captured for grounding: age, city, and skills.",
+        "Structured skill discovery intake captured for grounding.",
     },
     {
       role: "user" as const,
-      content: `I am ${data.age} years old and live in ${data.city}. My skills are ${skillsText}.`,
+      content: [
+        `Age: ${data.age ?? "unknown"}.`,
+        `Location: ${data.location || "unknown"}.`,
+        `Languages: ${(data.languages ?? []).join(", ") || "unknown"}.`,
+        `Work authorization: ${data.work_authorization || "unknown"}.`,
+        `Availability: ${data.availability || "unknown"}.`,
+        `Work mode preference: ${data.work_mode_preference || "unknown"}.`,
+        `Educational level: ${data.educational_level || "unknown"}.`,
+        `Target outcome: ${data.target_outcome || "unknown"}.`,
+        `Target roles: ${(data.target_roles ?? []).join(", ") || "unknown"}.`,
+        `Target industries: ${
+          (data.target_industries ?? []).join(", ") || "unknown"
+        }.`,
+        `Time horizon: ${data.time_horizon || "unknown"}.`,
+        `Priority tradeoff: ${data.priority_tradeoff || "unknown"}.`,
+        `Favorite skill: ${data.favorite_skill || "unknown"}.`,
+        `Current role: ${data.current_role_title || "unknown"}.`,
+        `Current industry: ${data.current_industry || "unknown"}.`,
+        `Total years experience: ${data.years_experience_total || "unknown"}.`,
+        `Domain years experience: ${data.years_experience_domain || "unknown"}.`,
+        `Skill confidence: ${data.skill_confidence || "unknown"}.`,
+        `Seniority: ${data.seniority_level || "unknown"}.`,
+        `Team lead experience: ${data.team_lead_experience || "unknown"}.`,
+        `Key responsibilities: ${
+          (data.key_responsibilities ?? []).join(", ") || "unknown"
+        }.`,
+        `Informal experience: ${data.informal_experience || "unknown"}.`,
+        `Demonstrated competencies: ${competenciesText || "unknown"}.`,
+        `Raw user-mentioned skills: ${skillsText || "unknown"}.`,
+      ].join("\n"),
     },
   ];
 }
@@ -452,6 +354,35 @@ function confidenceClass(confidence: ProfileSkill["confidence"]) {
   return "border-stone-300 bg-stone-100 text-stone-800";
 }
 
+function listText(items: string[]) {
+  return items.join(", ");
+}
+
+function requiredFieldValue(data: SurveyData, field: RequiredSurveyField) {
+  switch (field) {
+    case "age":
+      return data.age ? String(data.age) : "";
+    case "location":
+      return data.location;
+    case "languages":
+      return listText(data.languages ?? []);
+    case "work_authorization":
+      return data.work_authorization;
+    case "educational_level":
+      return data.educational_level;
+    case "favorite_skill":
+      return data.favorite_skill;
+    case "years_experience_total":
+      return data.years_experience_total;
+    case "skill_confidence":
+      return data.skill_confidence;
+    case "informal_experience":
+      return data.informal_experience;
+    case "demonstrated_competencies":
+      return listText(data.demonstrated_competencies ?? []);
+  }
+}
+
 export function SearchClient() {
   const [profileMessages, setProfileMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: firstSurveyPrompt },
@@ -464,6 +395,7 @@ export function SearchClient() {
   const [calculationStage, setCalculationStage] =
     useState<CalculationStage>("idle");
   const [viewPhase, setViewPhase] = useState<ViewPhase>("chat");
+  const [isAnalyzingIntake, setIsAnalyzingIntake] = useState(false);
   const [isGeneratingProfile, setIsGeneratingProfile] = useState(false);
 
   const profileJson = useMemo(() => {
@@ -471,41 +403,115 @@ export function SearchClient() {
   }, [profile]);
   const surveyMissing = missingSurveyFields(surveyData);
 
-  function addInterviewMessage(event: FormEvent<HTMLFormElement>) {
+  async function addInterviewMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const content = profileInput.trim();
-    if (!content) return;
+    if (!content || isAnalyzingIntake || isGeneratingProfile) return;
 
     const userMessage: ChatMessage = { role: "user", content };
-    const nextSurveyData = extractSurveyData(content, surveyData);
-    const assistantMessage: ChatMessage = {
-      role: "assistant",
-      content: promptForMissingFields(nextSurveyData),
-    };
-    const nextMessages = [...profileMessages, userMessage, assistantMessage];
+    const draftMessages = [...profileMessages, userMessage];
 
-    setSurveyData(nextSurveyData);
-    setProfileMessages(nextMessages);
+    setProfileMessages(draftMessages);
     setProfileInput("");
     setProfile(null);
-    setProfileStatus("");
+    setProfileStatus("Reading your message and updating the collected data.");
+    setError("");
+    setIsAnalyzingIntake(true);
+    setCalculationStage("idle");
+    setViewPhase("chat");
 
-    if (missingSurveyFields(nextSurveyData).length === 0) {
-      setCalculationStage("collected");
-      setViewPhase("loading");
-      void generateProfile(nextMessages, nextSurveyData);
-    } else {
-      setCalculationStage("idle");
-      setViewPhase("chat");
+    try {
+      const response = await fetch("/api/skill-profile/intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentData: surveyData,
+          latestMessage: content,
+          messages: draftMessages,
+        }),
+      });
+      const payload = (await response.json()) as IntakeAnalysis;
+
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || "Could not analyze the message.");
+      }
+
+      const nextSurveyData: SurveyData = {
+        age: payload.age,
+        location: payload.location,
+        languages: payload.languages,
+        work_authorization: payload.work_authorization,
+        availability: payload.availability,
+        work_mode_preference: payload.work_mode_preference,
+        educational_level: payload.educational_level,
+        target_outcome: payload.target_outcome,
+        target_roles: payload.target_roles,
+        target_industries: payload.target_industries,
+        time_horizon: payload.time_horizon,
+        priority_tradeoff: payload.priority_tradeoff,
+        favorite_skill: payload.favorite_skill,
+        current_role_title: payload.current_role_title,
+        current_industry: payload.current_industry,
+        years_experience_total: payload.years_experience_total,
+        years_experience_domain: payload.years_experience_domain,
+        skill_confidence: payload.skill_confidence,
+        seniority_level: payload.seniority_level,
+        team_lead_experience: payload.team_lead_experience,
+        key_responsibilities: payload.key_responsibilities,
+        informal_experience: payload.informal_experience,
+        demonstrated_competencies: payload.demonstrated_competencies,
+        skills: payload.skills,
+      };
+      const assistantMessage: ChatMessage = {
+        role: "assistant",
+        content: payload.assistant_message,
+      };
+      const nextMessages = [...draftMessages, assistantMessage];
+
+      setSurveyData(nextSurveyData);
+      setProfileMessages(nextMessages);
+      setProfileStatus("");
+
+      if (payload.ready_to_generate) {
+        setCalculationStage("collected");
+        setViewPhase("loading");
+        void generateProfile(
+          nextMessages,
+          nextSurveyData,
+          payload.user_requested_result,
+        );
+      } else {
+        setCalculationStage("idle");
+        setViewPhase("chat");
+      }
+    } catch (intakeError) {
+      const message =
+        intakeError instanceof Error
+          ? intakeError.message
+          : "Could not analyze the message.";
+
+      setProfileMessages([
+        ...draftMessages,
+        {
+          role: "assistant",
+          content:
+            "I could not read that message reliably. Please send the missing details again, for example: age 27, Hamburg Germany, German C1, EU work permit, bachelor, 3 years experience, favorite skill data analysis.",
+        },
+      ]);
+      setProfileStatus("");
+      setError(message);
+    } finally {
+      setIsAnalyzingIntake(false);
     }
   }
 
   async function generateProfile(
     messages = profileMessages,
     data = surveyData,
+    allowIncomplete = false,
   ) {
-    if (missingSurveyFields(data).length > 0) {
+    if (!allowIncomplete && missingSurveyFields(data).length > 0) {
       setProfileStatus(promptForMissingFields(data));
       return;
     }
@@ -513,7 +519,7 @@ export function SearchClient() {
     setError("");
     setViewPhase("loading");
     setCalculationStage("extracting");
-    setProfileStatus("All needed data is collected. Calculating the profile now.");
+    setProfileStatus("Important intake data is collected. Calculating the profile now.");
     setIsGeneratingProfile(true);
 
     try {
@@ -534,7 +540,17 @@ export function SearchClient() {
           locale: "en",
           context: {
             age: data.age,
-            city: data.city,
+            location: data.location,
+            languages: data.languages,
+            workAuthorization: data.work_authorization,
+            education: data.educational_level,
+            favoriteSkill: data.favorite_skill,
+            yearsExperienceTotal: data.years_experience_total,
+            skillConfidence: data.skill_confidence,
+            informalExperience: data.informal_experience,
+            demonstratedCompetencies: data.demonstrated_competencies,
+            rawSkills: data.skills,
+            targetRoles: data.target_roles,
             targetSectors: ["repair services", "digital work", "customer service"],
           },
         }),
@@ -567,6 +583,7 @@ export function SearchClient() {
   function loadAmaraDemo() {
     setProfile(null);
     setError("");
+    setIsAnalyzingIntake(false);
     setCalculationStage("collected");
     setViewPhase("loading");
     setSurveyData(amaraSurveyData);
@@ -575,7 +592,7 @@ export function SearchClient() {
       {
         role: "assistant",
         content:
-          "Thanks. I have your age, city, and skills. I am generating the analysis now.",
+          "Thanks. I have the important intake data. I am generating the analysis now.",
       },
     ]);
     void generateProfile(amaraDemoMessages, amaraSurveyData);
@@ -610,117 +627,14 @@ export function SearchClient() {
   function resetSurvey() {
     setProfile(null);
     setProfileStatus("");
+    setError("");
+    setIsAnalyzingIntake(false);
+    setIsGeneratingProfile(false);
     setCalculationStage("idle");
     setViewPhase("chat");
     setSurveyData(emptySurveyData);
     setProfileMessages([{ role: "assistant", content: firstSurveyPrompt }]);
     setProfileInput("");
-  }
-
-  function renderChatSurvey() {
-    return (
-      <section className="mx-auto grid w-full max-w-3xl gap-5">
-        <div className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="border-b border-stone-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-stone-950">
-              Chat survey
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">
-              First I collect age, city, and skills. Once those are present,
-              the analysis appears automatically.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span
-                className={`rounded border px-2 py-1 text-xs font-medium ${
-                  surveyData.age
-                    ? "border-teal-300 bg-teal-50 text-teal-950"
-                    : "border-stone-300 bg-stone-100 text-stone-600"
-                }`}
-              >
-                Age {surveyData.age ? `: ${surveyData.age}` : "needed"}
-              </span>
-              <span
-                className={`rounded border px-2 py-1 text-xs font-medium ${
-                  surveyData.city
-                    ? "border-teal-300 bg-teal-50 text-teal-950"
-                    : "border-stone-300 bg-stone-100 text-stone-600"
-                }`}
-              >
-                City {surveyData.city ? `: ${surveyData.city}` : "needed"}
-              </span>
-              <span
-                className={`rounded border px-2 py-1 text-xs font-medium ${
-                  surveyData.skills.length > 0
-                    ? "border-teal-300 bg-teal-50 text-teal-950"
-                    : "border-stone-300 bg-stone-100 text-stone-600"
-                }`}
-              >
-                Skills{" "}
-                {surveyData.skills.length > 0
-                  ? `: ${surveyData.skills.slice(0, 3).join(", ")}${
-                      surveyData.skills.length > 3 ? "..." : ""
-                    }`
-                  : "needed"}
-              </span>
-            </div>
-            <div
-              className={`mt-3 rounded-md border px-3 py-2 text-sm ${
-                surveyMissing.length === 0
-                  ? "border-teal-300 bg-teal-50 text-teal-950"
-                  : "border-amber-300 bg-amber-50 text-amber-950"
-              }`}
-            >
-              {surveyMissing.length === 0
-                ? "All needed data is collected: age, city, and skills."
-                : `Still needed: ${surveyMissing.join(", ")}.`}
-            </div>
-          </div>
-
-          <div className="max-h-[32rem] space-y-3 overflow-y-auto px-4 py-4">
-            {profileMessages.map((message, index) => (
-              <div
-                key={`${message.role}-${index}`}
-                className={
-                  message.role === "user"
-                    ? "ml-auto max-w-[88%] rounded-md bg-teal-800 px-3 py-2 text-sm leading-6 text-white"
-                    : "max-w-[88%] rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-800"
-                }
-              >
-                {message.content}
-              </div>
-            ))}
-          </div>
-
-          <form
-            onSubmit={addInterviewMessage}
-            className="grid gap-3 border-t border-stone-200 p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
-          >
-            <textarea
-              value={profileInput}
-              onChange={(event) => setProfileInput(event.target.value)}
-              placeholder="Example: I am 22, I live in Accra, and my skills are phone repair, customer service, and coding..."
-              className="min-h-24 resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-base leading-6 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-700/15"
-            />
-            <div className="flex flex-col gap-2">
-              <Button
-                type="submit"
-                className="h-11 rounded-md bg-stone-950 px-5 text-white hover:bg-teal-800"
-              >
-                Send
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 rounded-md border-stone-300 px-5"
-                onClick={loadAmaraDemo}
-              >
-                Amara demo
-              </Button>
-            </div>
-          </form>
-        </div>
-      </section>
-    );
   }
 
   function renderLoadingScreen() {
@@ -750,7 +664,7 @@ export function SearchClient() {
 
           <div className="mt-8 grid gap-2 text-sm sm:grid-cols-3">
             <span className="rounded border border-teal-300 bg-teal-50 px-3 py-2 font-medium text-teal-950">
-              Age, city, skills captured
+              Important intake captured
             </span>
             <span
               className={`rounded border px-3 py-2 font-medium ${
@@ -847,13 +761,18 @@ export function SearchClient() {
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
                 Collected data
               </p>
-              <p className="mt-2 text-sm leading-6 text-stone-800">
-                Age: {surveyData.age || "-"}
-                <br />
-                City: {surveyData.city || "-"}
-                <br />
-                Skills: {surveyData.skills.join(", ") || "-"}
-              </p>
+              <dl className="mt-2 space-y-1 text-sm leading-6 text-stone-800">
+                {requiredFieldKeys.slice(0, 5).map((field) => (
+                  <div key={field}>
+                    <dt className="inline font-medium">
+                      {requiredFieldLabels[field]}:{" "}
+                    </dt>
+                    <dd className="inline">
+                      {requiredFieldValue(surveyData, field) || "-"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
             <div className="border-b border-stone-200 px-4 py-3 md:border-b-0 md:border-r">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
@@ -938,13 +857,18 @@ export function SearchClient() {
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
                 1. Required data
               </p>
-              <p className="mt-2 text-sm leading-6 text-stone-800">
-                Age: {surveyData.age || "-"}
-                <br />
-                City: {surveyData.city || "-"}
-                <br />
-                User-provided skills: {surveyData.skills.join(", ") || "-"}
-              </p>
+              <dl className="mt-2 space-y-1 text-sm leading-6 text-stone-800">
+                {requiredFieldKeys.map((field) => (
+                  <div key={field}>
+                    <dt className="inline font-medium">
+                      {requiredFieldLabels[field]}:{" "}
+                    </dt>
+                    <dd className="inline">
+                      {requiredFieldValue(surveyData, field) || "-"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
             <div className="border-b border-stone-200 px-4 py-4 md:border-b-0 md:border-r">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
@@ -1384,42 +1308,28 @@ export function SearchClient() {
                 Chat survey
               </h2>
               <p className="mt-1 text-sm leading-6 text-stone-600">
-                First I collect age, city, and skills. Once those are present,
-                the analysis appears automatically.
+                I collect the important fields for the skill discovery engine.
+                You can answer naturally; press Enter to send or Shift+Enter for
+                a new line.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <span
-                  className={`rounded border px-2 py-1 text-xs font-medium ${
-                    surveyData.age
-                      ? "border-teal-300 bg-teal-50 text-teal-950"
-                      : "border-stone-300 bg-stone-100 text-stone-600"
-                  }`}
-                >
-                  Age {surveyData.age ? `: ${surveyData.age}` : "needed"}
-                </span>
-                <span
-                  className={`rounded border px-2 py-1 text-xs font-medium ${
-                    surveyData.city
-                      ? "border-teal-300 bg-teal-50 text-teal-950"
-                      : "border-stone-300 bg-stone-100 text-stone-600"
-                  }`}
-                >
-                  City {surveyData.city ? `: ${surveyData.city}` : "needed"}
-                </span>
-                <span
-                  className={`rounded border px-2 py-1 text-xs font-medium ${
-                    surveyData.skills.length > 0
-                      ? "border-teal-300 bg-teal-50 text-teal-950"
-                      : "border-stone-300 bg-stone-100 text-stone-600"
-                  }`}
-                >
-                  Skills{" "}
-                  {surveyData.skills.length > 0
-                    ? `: ${surveyData.skills.slice(0, 3).join(", ")}${
-                        surveyData.skills.length > 3 ? "..." : ""
-                      }`
-                    : "needed"}
-                </span>
+                {requiredFieldKeys.map((field) => {
+                  const value = requiredFieldValue(surveyData, field);
+
+                  return (
+                    <span
+                      key={field}
+                      className={`rounded border px-2 py-1 text-xs font-medium ${
+                        value
+                          ? "border-teal-300 bg-teal-50 text-teal-950"
+                          : "border-stone-300 bg-stone-100 text-stone-600"
+                      }`}
+                    >
+                      {requiredFieldLabels[field]}
+                      {value ? `: ${value.slice(0, 34)}${value.length > 34 ? "..." : ""}` : " needed"}
+                    </span>
+                  );
+                })}
               </div>
               <div
                 className={`mt-3 rounded-md border px-3 py-2 text-sm ${
@@ -1429,8 +1339,13 @@ export function SearchClient() {
                 }`}
               >
                 {surveyMissing.length === 0
-                  ? "All needed data is collected: age, city, and skills."
-                  : `Still needed: ${surveyMissing.join(", ")}.`}
+                  ? "All important data is collected."
+                  : `Still needed: ${surveyMissing
+                      .slice(0, 5)
+                      .map((field) => requiredFieldLabels[field])
+                      .join(", ")}${
+                      surveyMissing.length > 5 ? "..." : ""
+                    }. You can also say: show me the result now.`}
               </div>
               {calculationStage !== "idle" ? (
                 <div className="mt-3 rounded-md border border-stone-200 bg-white px-3 py-3">
@@ -1501,15 +1416,23 @@ export function SearchClient() {
               <textarea
                 value={profileInput}
                 onChange={(event) => setProfileInput(event.target.value)}
-                placeholder="Example: I am 22, I live in Accra, and my skills are phone repair, customer service, and coding..."
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder="Example: I am 27, in Hamburg Germany, German C1, EU work permit, bachelor, 3 years experience, favorite skill data analysis..."
                 className="min-h-24 resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-base leading-6 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-700/15"
+                disabled={isAnalyzingIntake || isGeneratingProfile}
               />
               <div className="flex flex-col gap-2">
                 <Button
                   type="submit"
                   className="h-11 rounded-md bg-stone-950 px-5 text-white hover:bg-teal-800"
+                  disabled={isAnalyzingIntake || isGeneratingProfile}
                 >
-                  Add
+                  {isAnalyzingIntake ? "Reading" : "Add"}
                 </Button>
                 <Button
                   type="button"
@@ -1526,29 +1449,26 @@ export function SearchClient() {
               <Button
                 type="button"
                 className="h-11 rounded-md bg-teal-800 px-5 text-white hover:bg-stone-950"
-                disabled={isGeneratingProfile || surveyMissing.length > 0}
+                disabled={
+                  isAnalyzingIntake ||
+                  isGeneratingProfile ||
+                  surveyMissing.length > 0
+                }
                 onClick={() => void generateProfile()}
               >
-                {isGeneratingProfile
+                {isAnalyzingIntake
+                  ? "Reading message"
+                  : isGeneratingProfile
                   ? "Generating analysis"
                   : surveyMissing.length > 0
-                    ? "Waiting for required info"
+                    ? "Waiting for important info"
                     : "Generate analysis"}
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 className="h-11 rounded-md border-stone-300 px-5"
-                onClick={() => {
-                  setProfile(null);
-                  setProfileStatus("");
-                  setCalculationStage("idle");
-                  setViewPhase("chat");
-                  setSurveyData(emptySurveyData);
-                  setProfileMessages([
-                    { role: "assistant", content: firstSurveyPrompt },
-                  ]);
-                }}
+                onClick={resetSurvey}
               >
                 Reset
               </Button>

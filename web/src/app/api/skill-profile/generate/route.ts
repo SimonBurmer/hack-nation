@@ -11,8 +11,12 @@ type ChatMessage = {
 type ProfileContext = {
   age?: number;
   city?: string;
+  location?: string;
   country?: string;
   educationTaxonomy?: string;
+  favoriteSkill?: string;
+  rawSkills?: string[];
+  targetRoles?: string[];
   targetSectors?: string[];
 };
 
@@ -343,6 +347,76 @@ function cleanLabel(value: string | null | undefined) {
   return (value || "").trim();
 }
 
+function normalizeText(value: string | null | undefined) {
+  return cleanLabel(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function keywordSet(value: string | null | undefined) {
+  const stopWords = new Set([
+    "a",
+    "an",
+    "and",
+    "for",
+    "in",
+    "of",
+    "the",
+    "to",
+    "with",
+    "work",
+    "working",
+    "skill",
+    "skills",
+  ]);
+
+  return new Set(
+    normalizeText(value)
+      .split(/\s+/)
+      .filter((word) => word.length > 2 && !stopWords.has(word)),
+  );
+}
+
+function affinityForText(text: string, interests: string[]) {
+  const textKeywords = keywordSet(text);
+  if (textKeywords.size === 0) return 0;
+
+  let bestScore = 0;
+
+  for (const interest of interests) {
+    const interestKeywords = keywordSet(interest);
+    if (interestKeywords.size === 0) continue;
+
+    const overlap = [...interestKeywords].filter((word) =>
+      textKeywords.has(word),
+    ).length;
+    const score = overlap / interestKeywords.size;
+
+    bestScore = Math.max(bestScore, score);
+  }
+
+  return bestScore;
+}
+
+function likedSkillAffinity(
+  occupationLabel: string,
+  matchedSkills: OccupationRequiredSkill[],
+  interests: string[],
+) {
+  if (interests.length === 0) {
+    return { score: 0, matchedLabels: [] as string[] };
+  }
+
+  const matchedLabels = matchedSkills
+    .map((skill) => skill.skill_label)
+    .filter((label) => affinityForText(label, interests) >= 0.5);
+  const skillScore = matchedLabels.length > 0 ? 1 : 0;
+  const titleScore = affinityForText(occupationLabel, interests) >= 0.5 ? 0.5 : 0;
+
+  return {
+    score: Math.max(skillScore, titleScore),
+    matchedLabels,
+  };
+}
+
 function isEssentialSkill(skill: OccupationRequiredSkill) {
   return skill.relation_types.some(
     (relationType) => relationType.trim().toLowerCase() === "essential",
@@ -513,6 +587,11 @@ export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const supabase = await createClient();
   const extracted = await extractEvidence(openai, messages);
+  const userInterests = [
+    context.favoriteSkill,
+    ...(Array.isArray(context.rawSkills) ? context.rawSkills : []),
+    ...(Array.isArray(context.targetRoles) ? context.targetRoles : []),
+  ].filter((item): item is string => Boolean(cleanLabel(item)));
   const extractedSkillItems =
     extracted.extracted_skills.length > 0
       ? extracted.extracted_skills
@@ -700,13 +779,27 @@ export async function POST(request: Request) {
               (sum, skill) => sum + (skillSimilarityByUri.get(skill.skill_uri) ?? 0),
               0,
             );
+            const likedSkill = likedSkillAffinity(
+              occupation.preferred_label,
+              matchedRequiredSkills,
+              userInterests,
+            );
+            const likedSkillBoost = likedSkill.score * 75;
             const relationRank = occupation.relation_rank ?? 2;
             const rankScore =
               matchedSkillCount * 100 +
               matchedEssentialSkills.length * 25 +
               skillCoverage * 10 +
+              likedSkillBoost +
               matchedSimilarity -
               relationRank;
+            const likedSkillReason =
+              likedSkill.score > 0
+                ? ` It is pushed higher because it connects to what the user enjoys: ${
+                    likedSkill.matchedLabels.slice(0, 3).join(", ") ||
+                    userInterests[0]
+                  }.`
+                : "";
 
             return {
               occupation_uri: occupation.occupation_uri,
@@ -723,10 +816,14 @@ export async function POST(request: Request) {
               matched_essential_skill_count: matchedEssentialSkills.length,
               skill_coverage: skillCoverage,
               rank_score: rankScore,
-              explanation: `Ranked here because the person has ${matchedSkillCount} of ${requiredSkillCount || "the listed"} ESCO skills for this job, including ${matchedEssentialSkills.length} essential skill${matchedEssentialSkills.length === 1 ? "" : "s"}.`,
+              explanation: `Ranked here because the person has ${matchedSkillCount} of ${requiredSkillCount || "the listed"} ESCO skills for this job, including ${matchedEssentialSkills.length} essential skill${matchedEssentialSkills.length === 1 ? "" : "s"}.${likedSkillReason}`,
             };
           })
           .sort((a, b) => {
+            if (b.rank_score !== a.rank_score) {
+              return b.rank_score - a.rank_score;
+            }
+
             if (b.matched_skill_count !== a.matched_skill_count) {
               return b.matched_skill_count - a.matched_skill_count;
             }
@@ -743,10 +840,6 @@ export async function POST(request: Request) {
 
             if (b.skill_coverage !== a.skill_coverage) {
               return b.skill_coverage - a.skill_coverage;
-            }
-
-            if (b.rank_score !== a.rank_score) {
-              return b.rank_score - a.rank_score;
             }
 
             return a.preferred_label.localeCompare(b.preferred_label);
