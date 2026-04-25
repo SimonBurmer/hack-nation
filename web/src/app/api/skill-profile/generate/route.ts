@@ -72,20 +72,8 @@ type GroundingTrace = {
 
 type GroundedSkill = {
   concept_uri: string;
-  preferred_label: string;
-  plain_language_label: string;
   evidence_quote: string;
-  database_query: string;
-  top_skill_candidates: SkillCandidateSummary[];
   similarity: number;
-  confidence: "strong" | "medium" | "needs_review";
-  explanation: string;
-  sources: {
-    esco_uri: string;
-    esco_text: string;
-    embedding_search: string;
-    llm_evidence_extraction: string;
-  };
 };
 
 type OccupationRequiredSkill = {
@@ -108,6 +96,8 @@ type OccupationPath = {
   essential_skill_count: number;
   matched_essential_skill_count: number;
   skill_coverage: number;
+  matched_similarity: number;
+  relation_rank: number;
   rank_score: number;
   explanation: string;
 };
@@ -118,16 +108,6 @@ type OccupationSkillRelation = {
   skill_type: string | null;
   skill_uri: string;
   skill_label: string | null;
-};
-
-type ExplanationItem = {
-  concept_uri: string;
-  plain_language_label: string;
-  explanation: string;
-};
-
-type ExplanationResponse = {
-  explanations: ExplanationItem[];
 };
 
 const extractionSchema = {
@@ -256,41 +236,6 @@ const extractionSchema = {
   },
 } as const;
 
-const explanationSchema = {
-  name: "skill_signal_explanations",
-  strict: true,
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    required: ["explanations"],
-    properties: {
-      explanations: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["concept_uri", "plain_language_label", "explanation"],
-          properties: {
-            concept_uri: { type: "string" },
-            plain_language_label: { type: "string" },
-            explanation: {
-              type: "string",
-              description:
-                "One sentence explaining why the user evidence maps to the ESCO skill. Mention the user evidence and ESCO wording, but do not invent facts.",
-            },
-          },
-        },
-      },
-    },
-  },
-} as const;
-
-function confidenceFor(similarity: number): GroundedSkill["confidence"] {
-  if (similarity >= 0.78) return "strong";
-  if (similarity >= 0.65) return "medium";
-  return "needs_review";
-}
-
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
 
@@ -329,14 +274,6 @@ function transcriptFrom(messages: ChatMessage[]) {
   return messages
     .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
     .join("\n");
-}
-
-function escoText(candidate: SkillCandidate) {
-  return candidate.definition || candidate.description || candidate.preferred_label;
-}
-
-function fallbackExplanation(skill: GroundedSkill) {
-  return `Your evidence says "${skill.evidence_quote}", which is close to the ESCO skill "${skill.preferred_label}".`;
 }
 
 function cleanLabel(value: string | null | undefined) {
@@ -440,51 +377,6 @@ async function extractEvidence(openai: OpenAI, messages: ChatMessage[]) {
   );
 }
 
-async function explainSkills(openai: OpenAI, skills: GroundedSkill[]) {
-  if (skills.length === 0) return new Map<string, ExplanationItem>();
-
-  const model = process.env.SKILL_PROFILE_MODEL || "gpt-4o-mini";
-  const completion = await openai.chat.completions.create({
-    model,
-    temperature: 0.2,
-    messages: [
-      {
-        role: "system",
-        content:
-          "Explain ESCO skill mappings for a non-expert youth user. Use only the supplied evidence and ESCO text. Do not add new claims.",
-      },
-      {
-        role: "user",
-        content: JSON.stringify(
-          skills.map((skill) => ({
-            concept_uri: skill.concept_uri,
-            user_evidence: skill.evidence_quote,
-            esco_skill: skill.preferred_label,
-            esco_text: skill.sources.esco_text,
-            similarity: skill.similarity,
-          })),
-        ),
-      },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: explanationSchema,
-    },
-  });
-
-  const payload = parseJson<ExplanationResponse>(
-    completion.choices[0]?.message.content,
-    { explanations: [] },
-  );
-
-  return new Map(
-    payload.explanations.map((explanation) => [
-      explanation.concept_uri,
-      explanation,
-    ]),
-  );
-}
-
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     messages?: unknown;
@@ -584,42 +476,17 @@ export async function POST(request: Request) {
     seenSkillUris.add(candidate.concept_uri);
     groundedSkills.push({
       concept_uri: candidate.concept_uri,
-      preferred_label: candidate.preferred_label,
-      plain_language_label: item.plain_language_label,
       evidence_quote: item.evidence_quote,
-      database_query: ragQueries[index],
-      top_skill_candidates: topSkillCandidates,
       similarity: candidate.similarity,
-      confidence: confidenceFor(candidate.similarity),
-      explanation: "",
-      sources: {
-        esco_uri: candidate.concept_uri,
-        esco_text: escoText(candidate),
-        embedding_search: `Embedded this extracted skill and sent it to the ESCO skills vector database: ${ragQueries[index]}`,
-        llm_evidence_extraction:
-          "The LLM extracted this skill from the interview transcript; ESCO matching was done separately by embedding search.",
-      },
     });
   }
 
-  const explanations = await explainSkills(openai, groundedSkills);
-  const skills = groundedSkills.map((skill) => {
-    const explanation = explanations.get(skill.concept_uri);
-
-    return {
-      ...skill,
-      plain_language_label:
-        explanation?.plain_language_label || skill.plain_language_label,
-      explanation: explanation?.explanation || fallbackExplanation(skill),
-    };
-  });
-
-  const acceptedSkillUris = skills
+  const acceptedSkillUris = groundedSkills
     .slice(0, 8)
     .map((skill) => skill.concept_uri);
   const personSkillUris = new Set(acceptedSkillUris);
   const skillSimilarityByUri = new Map(
-    skills.map((skill) => [skill.concept_uri, skill.similarity]),
+    groundedSkills.map((skill) => [skill.concept_uri, skill.similarity]),
   );
 
   const occupationPaths: OccupationPath[] = [];
@@ -722,6 +589,8 @@ export async function POST(request: Request) {
               essential_skill_count: essentialSkills.length,
               matched_essential_skill_count: matchedEssentialSkills.length,
               skill_coverage: skillCoverage,
+              matched_similarity: matchedSimilarity,
+              relation_rank: relationRank,
               rank_score: rankScore,
               explanation: `Ranked here because the person has ${matchedSkillCount} of ${requiredSkillCount || "the listed"} ESCO skills for this job, including ${matchedEssentialSkills.length} essential skill${matchedEssentialSkills.length === 1 ? "" : "s"}.`,
             };
@@ -763,11 +632,12 @@ export async function POST(request: Request) {
     extracted_skills: evidenceItems,
     experience_evidence: evidenceItems.map((item) => ({
       ...item,
-      mapped: skills.some((skill) => skill.evidence_quote === item.evidence_quote),
+      mapped: groundedSkills.some(
+        (skill) => skill.evidence_quote === item.evidence_quote,
+      ),
     })),
     unmapped_evidence: unmappedEvidence,
     grounding_trace: groundingTrace,
-    skills,
     occupation_paths: occupationPaths,
     export_metadata: {
       generated_at: new Date().toISOString(),
