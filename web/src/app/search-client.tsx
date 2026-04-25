@@ -120,53 +120,253 @@ const amaraSurveyData: SurveyData = {
   ],
 };
 
+const intakeSeparators = /[,;\n]+/;
+const validAgeRange = { min: 10, max: 80 };
+
+function cleanFreeText(value: string) {
+  return value
+    .trim()
+    .replace(/^[\s:=-]+/, "")
+    .replace(/[\s.,;:=-]+$/, "")
+    .replace(/\s+/g, " ");
+}
+
+function formatCity(value: string) {
+  const cleaned = cleanFreeText(value)
+    .replace(/\s+(?:and\s+)?(?:my\s+)?skills\b.*$/i, "")
+    .replace(/\s+(?:and\s+)?(?:i\s+am|i'm|im|age|aged)\b.*$/i, "");
+
+  if (!cleaned) return "";
+
+  if (cleaned === cleaned.toLowerCase() || cleaned === cleaned.toUpperCase()) {
+    return cleaned.replace(/\b[A-Za-z]/g, (letter) => letter.toUpperCase());
+  }
+
+  return cleaned;
+}
+
+function splitMessageParts(value: string) {
+  return value.split(intakeSeparators).map(cleanFreeText).filter(Boolean);
+}
+
+function parseAge(value: string) {
+  const age = Number(value);
+
+  if (
+    Number.isFinite(age) &&
+    age >= validAgeRange.min &&
+    age <= validAgeRange.max
+  ) {
+    return age;
+  }
+
+  return null;
+}
+
+function ageFromMatch(match: RegExpMatchArray | null) {
+  return match ? parseAge(match[1]) : null;
+}
+
+function ageFromPart(part: string) {
+  return ageFromMatch(
+    part.match(
+      /^(?:age|aged)?\s*[:=-]?\s*(\d{1,2})(?:\s*(?:years old|year old|yo|y\/o))?$/i,
+    ),
+  );
+}
+
+function extractAge(message: string, parts: string[]) {
+  const explicitAge =
+    ageFromMatch(
+      message.match(
+        /\b(?:i am|i'm|im|age is|aged|age|am)\s*[:=-]?\s*(\d{1,2})\b/i,
+      ),
+    ) ||
+    ageFromMatch(
+      message.match(/\b(\d{1,2})\s*(?:years old|year old|yo|y\/o)\b/i),
+    );
+
+  if (explicitAge) return explicitAge;
+
+  for (const part of parts) {
+    const partAge = ageFromPart(part);
+    if (partAge) return partAge;
+  }
+
+  return null;
+}
+
+function cityFromPart(part: string) {
+  const labelledCity = part.match(
+    /^(?:city|location)\s*(?:is|:|=|-)?\s+([A-Za-z][A-Za-z\s-]{1,40})$/i,
+  );
+
+  if (labelledCity) {
+    return formatCity(labelledCity[1]);
+  }
+
+  if (
+    /^[A-Za-z][A-Za-z\s-]{1,40}$/.test(part) &&
+    !/^(?:age|aged|skills?)\b/i.test(part)
+  ) {
+    return formatCity(part);
+  }
+
+  return "";
+}
+
+function extractExplicitCity(message: string) {
+  const cityMatch = message.match(
+    /\b(?:live\s+(?:in|near|outside)|living\s+(?:in|near|outside)|based\s+in|from|outside|near|city|location)\s*(?:is|:|=|-)?\s+([A-Za-z][A-Za-z\s-]{1,40}?)(?=\s*(?:[,.;\n]|\band\s+(?:i\s+am|i'm|im|age|aged|my\s+skills|skills)\b|\b(?:age|aged|my\s+skills|skills)\b|$))/i,
+  );
+
+  return cityMatch ? formatCity(cityMatch[1]) : "";
+}
+
+function inferCityFromParts(
+  parts: string[],
+  age: number | null,
+  missingBefore: string[],
+) {
+  for (const part of parts) {
+    const labelledCity = part.match(
+      /^(?:city|location)\s*(?:is|:|=|-)?\s+([A-Za-z][A-Za-z\s-]{1,40})$/i,
+    );
+
+    if (labelledCity) return formatCity(labelledCity[1]);
+  }
+
+  if (missingBefore[0] === "city" && parts.length === 1) {
+    return cityFromPart(parts[0]);
+  }
+
+  if (!age || parts.length < 3) return "";
+
+  const ageIndex = parts.findIndex((part) => ageFromPart(part) === age);
+  const cityCandidates = parts
+    .map((part, index) => ({ index, value: cityFromPart(part) }))
+    .filter((part) => part.value);
+
+  return (
+    cityCandidates.find((part) => part.index < ageIndex)?.value ||
+    cityCandidates.find((part) => part.index > ageIndex)?.value ||
+    cityCandidates[0]?.value ||
+    ""
+  );
+}
+
+function stripSkillPrefix(value: string) {
+  return cleanFreeText(value)
+    .replace(
+      /^(?:my\s+)?skills(?:\s+(?:are|include|includes|is))?\s*[:=-]?\s*/i,
+      "",
+    )
+    .replace(/^(?:i\s+can|i\s+know\s+how\s+to|i\s+know|good\s+at)\s+/i, "")
+    .trim();
+}
+
 function splitSkills(value: string) {
   return value
-    .replace(/\band\b/gi, ",")
-    .split(/[,;\n]/)
-    .map((skill) => skill.trim().replace(/^\W+|\W+$/g, ""))
-    .filter((skill) => skill.length > 1);
+    .replace(/\b(?:and|plus|also)\b/gi, ",")
+    .split(intakeSeparators)
+    .map(stripSkillPrefix)
+    .filter(
+      (skill) =>
+        skill.length > 1 &&
+        !/^(?:age|aged|city|location)\b/i.test(skill) &&
+        ageFromPart(skill) === null,
+    );
+}
+
+function mergeSkills(current: string[], incoming: string[]) {
+  const seen = new Set(current.map((skill) => skill.toLowerCase()));
+  const merged = [...current];
+
+  for (const skill of incoming) {
+    const key = skill.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(skill);
+    }
+  }
+
+  return merged;
+}
+
+function extractExplicitSkills(message: string) {
+  const skillsMatch =
+    message.match(
+      /\b(?:my\s+)?skills(?:\s+(?:are|include|includes|is))?\s*[:=-]?\s+(.+)$/i,
+    ) ||
+    message.match(/\b(?:i can|i know how to|i know|good at)\s+(.+)$/i);
+
+  return skillsMatch ? splitSkills(skillsMatch[1]) : [];
+}
+
+function inferSkillsFromParts(
+  parts: string[],
+  age: number | null,
+  city: string,
+) {
+  const cityKey = city.toLowerCase();
+
+  return parts
+    .filter((part) => age === null || ageFromPart(part) !== age)
+    .map((part) => {
+      const cityPart = cityFromPart(part).toLowerCase();
+
+      if (cityKey && cityPart === cityKey) return "";
+      if (/^(?:city|location)\b/i.test(part)) return "";
+
+      return stripSkillPrefix(part);
+    })
+    .filter(
+      (skill) =>
+        skill.length > 1 &&
+        skill.toLowerCase() !== cityKey &&
+        !/^(?:age|aged|city|location)\b/i.test(skill) &&
+        ageFromPart(skill) === null,
+    );
 }
 
 function extractSurveyData(message: string, current: SurveyData): SurveyData {
   const missingBefore = missingSurveyFields(current);
   const trimmedMessage = message.trim();
-  const ageMatch =
-    message.match(/\b(?:i am|i'm|age is|aged|age|am)\s*(\d{1,2})\b/i) ||
-    message.match(/\b(\d{1,2})\s*(?:years old|year old)\b/i) ||
-    (missingBefore[0] === "age" ? message.match(/^\s*(\d{1,2})\s*$/) : null);
-  const cityMatch =
-    message.match(/\b(?:live in|living in|from|outside|near|city is|based in)\s+([A-Za-z][A-Za-z\s-]{1,40})(?:[,.]|$)/i) ||
-    message.match(/\b(?:city|location)\s*:\s*([A-Za-z][A-Za-z\s-]{1,40})(?:[,.]|$)/i);
-  const skillsMatch =
-    message.match(/\b(?:skills are|skills include|my skills are|i can|i know how to|good at)\s+(.+)$/i) ||
-    message.match(/\bskills\s*:\s*(.+)$/i);
+  const parts = splitMessageParts(message);
+  const incomingAge = extractAge(message, parts);
 
   const next: SurveyData = {
     age: current.age,
     city: current.city,
-    skills: current.skills,
+    skills: [...current.skills],
   };
 
-  if (!next.age && ageMatch) {
-    const parsedAge = Number(ageMatch[1]);
-    if (Number.isFinite(parsedAge) && parsedAge >= 10 && parsedAge <= 80) {
-      next.age = parsedAge;
-    }
+  if (!next.age && incomingAge) {
+    next.age = incomingAge;
   }
 
-  if (!next.city && cityMatch) {
-    next.city = cityMatch[1].trim().replace(/\s+/g, " ");
+  const incomingCity =
+    extractExplicitCity(message) ||
+    inferCityFromParts(parts, next.age, missingBefore);
+
+  if (!next.city && incomingCity) {
+    next.city = incomingCity;
   } else if (
     !next.city &&
     missingBefore[0] === "city" &&
     /^[A-Za-z][A-Za-z\s-]{1,40}$/.test(trimmedMessage)
   ) {
-    next.city = trimmedMessage.replace(/\s+/g, " ");
+    next.city = formatCity(trimmedMessage);
   }
 
-  if (next.skills.length === 0 && skillsMatch) {
-    next.skills = splitSkills(skillsMatch[1]);
+  const explicitSkills = extractExplicitSkills(message);
+  const inferredSkills =
+    explicitSkills.length > 0
+      ? explicitSkills
+      : inferSkillsFromParts(parts, next.age, next.city);
+
+  if (inferredSkills.length > 0) {
+    next.skills = mergeSkills(next.skills, inferredSkills);
   } else if (
     next.skills.length === 0 &&
     missingBefore[0] === "skills" &&
