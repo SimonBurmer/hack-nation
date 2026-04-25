@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "db:setup": "node scripts/setup-db.js",
+    "import:occupations": "node scripts/import-occupations.js",
     "import:skills": "node scripts/import-skills.js",
     "search": "node scripts/search-skills.js"
   },
