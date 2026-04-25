@@ -9,6 +9,8 @@ type ChatMessage = {
 };
 
 type ProfileContext = {
+  age?: number;
+  city?: string;
   country?: string;
   educationTaxonomy?: string;
   targetSectors?: string[];
@@ -30,11 +32,16 @@ type ExtractedEvidence = {
   plain_language_label: string;
 };
 
+type ExtractedSkill = ExtractedEvidence & {
+  skill_label: string;
+};
+
 type ExtractedProfile = {
   person_summary: string;
   education: string;
   languages: string[];
   experience_evidence: ExtractedEvidence[];
+  extracted_skills: ExtractedSkill[];
 };
 
 type SkillCandidate = {
@@ -57,6 +64,7 @@ type SkillCandidateSummary = {
 
 type GroundingTrace = {
   evidence_id: string;
+  extracted_skill: string;
   evidence_quote: string;
   database_query: string;
   top_skill_candidates: SkillCandidateSummary[];
@@ -80,12 +88,36 @@ type GroundedSkill = {
   };
 };
 
+type OccupationRequiredSkill = {
+  skill_uri: string;
+  skill_label: string;
+  relation_types: string[];
+  skill_types: string[];
+  person_has: boolean;
+};
+
 type OccupationPath = {
   occupation_uri: string;
   preferred_label: string;
   relation_types: string[];
   matched_skill_labels: string[];
+  required_skills: OccupationRequiredSkill[];
+  matched_required_skills: OccupationRequiredSkill[];
+  required_skill_count: number;
+  matched_skill_count: number;
+  essential_skill_count: number;
+  matched_essential_skill_count: number;
+  skill_coverage: number;
+  rank_score: number;
   explanation: string;
+};
+
+type OccupationSkillRelation = {
+  occupation_uri: string;
+  relation_type: string | null;
+  skill_type: string | null;
+  skill_uri: string;
+  skill_label: string | null;
 };
 
 type ExplanationItem = {
@@ -109,6 +141,7 @@ const extractionSchema = {
       "education",
       "languages",
       "experience_evidence",
+      "extracted_skills",
     ],
     properties: {
       person_summary: {
@@ -155,6 +188,57 @@ const extractionSchema = {
               type: "string",
               description:
                 "A short exact or near-exact user statement that supports this evidence item.",
+            },
+            competency: {
+              type: "string",
+              description:
+                "The inferred ability, action, or competency to ground against ESCO.",
+            },
+            plain_language_label: {
+              type: "string",
+              description: "A non-technical label the user can understand.",
+            },
+          },
+        },
+      },
+      extracted_skills: {
+        type: "array",
+        maxItems: 20,
+        description:
+          "Every distinct skill the person claims or demonstrates, split as specifically as possible.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "id",
+            "category",
+            "skill_label",
+            "evidence_quote",
+            "competency",
+            "plain_language_label",
+          ],
+          properties: {
+            id: { type: "string" },
+            category: {
+              type: "string",
+              enum: [
+                "education",
+                "experience",
+                "language",
+                "tool",
+                "competency",
+                "goal",
+              ],
+            },
+            skill_label: {
+              type: "string",
+              description:
+                "A concise skill phrase extracted from the person's statement, such as 'phone repair' or 'customer communication'.",
+            },
+            evidence_quote: {
+              type: "string",
+              description:
+                "A short exact or near-exact user statement that supports this skill.",
             },
             competency: {
               type: "string",
@@ -255,6 +339,72 @@ function fallbackExplanation(skill: GroundedSkill) {
   return `Your evidence says "${skill.evidence_quote}", which is close to the ESCO skill "${skill.preferred_label}".`;
 }
 
+function cleanLabel(value: string | null | undefined) {
+  return (value || "").trim();
+}
+
+function isEssentialSkill(skill: OccupationRequiredSkill) {
+  return skill.relation_types.some(
+    (relationType) => relationType.trim().toLowerCase() === "essential",
+  );
+}
+
+function relationSortValue(skill: OccupationRequiredSkill) {
+  if (isEssentialSkill(skill)) return 0;
+  if (
+    skill.relation_types.some(
+      (relationType) => relationType.trim().toLowerCase() === "optional",
+    )
+  ) {
+    return 1;
+  }
+
+  return 2;
+}
+
+function compactOccupationSkills(
+  relations: OccupationSkillRelation[],
+  personSkillUris: Set<string>,
+) {
+  const skillsByUri = new Map<string, OccupationRequiredSkill>();
+
+  for (const relation of relations) {
+    const existing = skillsByUri.get(relation.skill_uri);
+    const relationType = cleanLabel(relation.relation_type);
+    const skillType = cleanLabel(relation.skill_type);
+
+    if (existing) {
+      if (relationType && !existing.relation_types.includes(relationType)) {
+        existing.relation_types.push(relationType);
+      }
+
+      if (skillType && !existing.skill_types.includes(skillType)) {
+        existing.skill_types.push(skillType);
+      }
+
+      continue;
+    }
+
+    skillsByUri.set(relation.skill_uri, {
+      skill_uri: relation.skill_uri,
+      skill_label: cleanLabel(relation.skill_label) || relation.skill_uri,
+      relation_types: relationType ? [relationType] : [],
+      skill_types: skillType ? [skillType] : [],
+      person_has: personSkillUris.has(relation.skill_uri),
+    });
+  }
+
+  return [...skillsByUri.values()].sort((a, b) => {
+    const personHasSort = Number(b.person_has) - Number(a.person_has);
+    if (personHasSort !== 0) return personHasSort;
+
+    const relationSort = relationSortValue(a) - relationSortValue(b);
+    if (relationSort !== 0) return relationSort;
+
+    return a.skill_label.localeCompare(b.skill_label);
+  });
+}
+
 async function extractEvidence(openai: OpenAI, messages: ChatMessage[]) {
   const model = process.env.SKILL_PROFILE_MODEL || "gpt-4o-mini";
   const completion = await openai.chat.completions.create({
@@ -264,11 +414,11 @@ async function extractEvidence(openai: OpenAI, messages: ChatMessage[]) {
       {
         role: "system",
         content:
-          "You extract portable skill evidence for youth employment profiles. Use only the interview text. Do not invent credentials, employers, places, or skills. Return JSON that matches the schema.",
+          "You extract portable skills for youth employment profiles. Use only the interview text. Split skill lists into distinct skills. Do not invent credentials, employers, places, or skills. Return JSON that matches the schema.",
       },
       {
         role: "user",
-        content: `Extract skill evidence from this interview transcript.\n\n${transcriptFrom(messages)}`,
+        content: `Extract all distinct skills from this interview transcript. Split combined lists into separate skill items where possible. Use the exact user evidence that supports each skill.\n\n${transcriptFrom(messages)}`,
       },
     ],
     response_format: {
@@ -285,6 +435,7 @@ async function extractEvidence(openai: OpenAI, messages: ChatMessage[]) {
       education: "",
       languages: [],
       experience_evidence: [],
+      extracted_skills: [],
     },
   );
 }
@@ -362,22 +513,23 @@ export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const supabase = await createClient();
   const extracted = await extractEvidence(openai, messages);
-  const evidenceItems = extracted.experience_evidence.slice(0, 10);
+  const extractedSkillItems =
+    extracted.extracted_skills.length > 0
+      ? extracted.extracted_skills
+      : extracted.experience_evidence.map((item) => ({
+          ...item,
+          skill_label: item.plain_language_label,
+        }));
+  const evidenceItems = extractedSkillItems.slice(0, 20);
 
-  const embeddingInputs = evidenceItems.map(
-    (item) =>
-      [
-        extracted.person_summary,
-        item.plain_language_label,
-        item.competency,
-        item.evidence_quote,
-      ].join("\n"),
+  const ragQueries = evidenceItems.map(
+    (item) => item.skill_label || item.plain_language_label || item.competency,
   );
   const embeddingResponse =
-    embeddingInputs.length > 0
+    ragQueries.length > 0
       ? await openai.embeddings.create({
           model: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
-          input: embeddingInputs,
+          input: ragQueries,
         })
       : null;
 
@@ -412,8 +564,9 @@ export async function POST(request: Request) {
 
     groundingTrace.push({
       evidence_id: item.id,
+      extracted_skill: item.skill_label,
       evidence_quote: item.evidence_quote,
-      database_query: embeddingInputs[index],
+      database_query: ragQueries[index],
       top_skill_candidates: topSkillCandidates,
     });
 
@@ -434,7 +587,7 @@ export async function POST(request: Request) {
       preferred_label: candidate.preferred_label,
       plain_language_label: item.plain_language_label,
       evidence_quote: item.evidence_quote,
-      database_query: embeddingInputs[index],
+      database_query: ragQueries[index],
       top_skill_candidates: topSkillCandidates,
       similarity: candidate.similarity,
       confidence: confidenceFor(candidate.similarity),
@@ -442,9 +595,9 @@ export async function POST(request: Request) {
       sources: {
         esco_uri: candidate.concept_uri,
         esco_text: escoText(candidate),
-        embedding_search: `Embedded this query and sent it to the ESCO skills vector database: ${embeddingInputs[index]}`,
+        embedding_search: `Embedded this extracted skill and sent it to the ESCO skills vector database: ${ragQueries[index]}`,
         llm_evidence_extraction:
-          "The LLM extracted this evidence from the interview transcript; ESCO matching was done separately by embedding search.",
+          "The LLM extracted this skill from the interview transcript; ESCO matching was done separately by embedding search.",
       },
     });
   }
@@ -464,6 +617,10 @@ export async function POST(request: Request) {
   const acceptedSkillUris = skills
     .slice(0, 8)
     .map((skill) => skill.concept_uri);
+  const personSkillUris = new Set(acceptedSkillUris);
+  const skillSimilarityByUri = new Map(
+    skills.map((skill) => [skill.concept_uri, skill.similarity]),
+  );
 
   const occupationPaths: OccupationPath[] = [];
 
@@ -476,30 +633,134 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    occupationPaths.push(
-      ...((data ?? []) as Array<{
-        occupation_uri: string;
-        preferred_label: string;
-        relation_types: string[] | null;
-        matched_skill_labels: string[] | null;
-      }>)
-        .slice(0, 6)
-        .map((occupation) => ({
-          occupation_uri: occupation.occupation_uri,
-          preferred_label: occupation.preferred_label,
-          relation_types: occupation.relation_types ?? [],
-          matched_skill_labels: occupation.matched_skill_labels ?? [],
-          explanation: `This path appears because ESCO links it to ${(
-            occupation.matched_skill_labels ?? []
-          ).join(", ") || "one or more matched skills"}.`,
-        })),
-    );
+    const occupationCandidates = ((data ?? []) as Array<{
+      occupation_uri: string;
+      preferred_label: string;
+      relation_types: string[] | null;
+      matched_skill_labels: string[] | null;
+      relation_rank: number | null;
+    }>);
+    const occupationUris = [
+      ...new Set(
+        occupationCandidates.map((occupation) => occupation.occupation_uri),
+      ),
+    ];
+
+    if (occupationUris.length > 0) {
+      const relationRows: OccupationSkillRelation[] = [];
+      const relationsByOccupation = new Map<string, OccupationSkillRelation[]>();
+
+      for (let index = 0; index < occupationUris.length; index += 100) {
+        const occupationUriChunk = occupationUris.slice(index, index + 100);
+        const { data: relationData, error: relationError } = await supabase
+          .from("esco_occupation_skill_relations")
+          .select(
+            "occupation_uri, relation_type, skill_type, skill_uri, skill_label",
+          )
+          .in("occupation_uri", occupationUriChunk);
+
+        if (relationError) {
+          return NextResponse.json(
+            { error: relationError.message },
+            { status: 500 },
+          );
+        }
+
+        relationRows.push(
+          ...((relationData ?? []) as OccupationSkillRelation[]),
+        );
+      }
+
+      for (const relation of relationRows) {
+        const relations = relationsByOccupation.get(relation.occupation_uri) ?? [];
+        relations.push(relation);
+        relationsByOccupation.set(relation.occupation_uri, relations);
+      }
+
+      occupationPaths.push(
+        ...occupationCandidates
+          .map((occupation) => {
+            const requiredSkills = compactOccupationSkills(
+              relationsByOccupation.get(occupation.occupation_uri) ?? [],
+              personSkillUris,
+            );
+            const matchedRequiredSkills = requiredSkills.filter(
+              (skill) => skill.person_has,
+            );
+            const essentialSkills = requiredSkills.filter(isEssentialSkill);
+            const matchedEssentialSkills =
+              matchedRequiredSkills.filter(isEssentialSkill);
+            const requiredSkillCount = requiredSkills.length;
+            const matchedSkillCount = matchedRequiredSkills.length;
+            const skillCoverage =
+              requiredSkillCount > 0
+                ? matchedSkillCount / requiredSkillCount
+                : 0;
+            const matchedSimilarity = matchedRequiredSkills.reduce(
+              (sum, skill) => sum + (skillSimilarityByUri.get(skill.skill_uri) ?? 0),
+              0,
+            );
+            const relationRank = occupation.relation_rank ?? 2;
+            const rankScore =
+              matchedSkillCount * 100 +
+              matchedEssentialSkills.length * 25 +
+              skillCoverage * 10 +
+              matchedSimilarity -
+              relationRank;
+
+            return {
+              occupation_uri: occupation.occupation_uri,
+              preferred_label: occupation.preferred_label,
+              relation_types: occupation.relation_types ?? [],
+              matched_skill_labels: matchedRequiredSkills.map(
+                (skill) => skill.skill_label,
+              ),
+              required_skills: requiredSkills,
+              matched_required_skills: matchedRequiredSkills,
+              required_skill_count: requiredSkillCount,
+              matched_skill_count: matchedSkillCount,
+              essential_skill_count: essentialSkills.length,
+              matched_essential_skill_count: matchedEssentialSkills.length,
+              skill_coverage: skillCoverage,
+              rank_score: rankScore,
+              explanation: `Ranked here because the person has ${matchedSkillCount} of ${requiredSkillCount || "the listed"} ESCO skills for this job, including ${matchedEssentialSkills.length} essential skill${matchedEssentialSkills.length === 1 ? "" : "s"}.`,
+            };
+          })
+          .sort((a, b) => {
+            if (b.matched_skill_count !== a.matched_skill_count) {
+              return b.matched_skill_count - a.matched_skill_count;
+            }
+
+            if (
+              b.matched_essential_skill_count !==
+              a.matched_essential_skill_count
+            ) {
+              return (
+                b.matched_essential_skill_count -
+                a.matched_essential_skill_count
+              );
+            }
+
+            if (b.skill_coverage !== a.skill_coverage) {
+              return b.skill_coverage - a.skill_coverage;
+            }
+
+            if (b.rank_score !== a.rank_score) {
+              return b.rank_score - a.rank_score;
+            }
+
+            return a.preferred_label.localeCompare(b.preferred_label);
+          })
+          .slice(0, 8),
+      );
+    }
   }
 
   return NextResponse.json({
     person_summary: extracted.person_summary,
     education: extracted.education,
     languages: extracted.languages,
+    extracted_skills: evidenceItems,
     experience_evidence: evidenceItems.map((item) => ({
       ...item,
       mapped: skills.some((skill) => skill.evidence_quote === item.evidence_quote),
@@ -514,7 +775,7 @@ export async function POST(request: Request) {
       context,
       engine_version: "skill-engine-v1",
       grounding:
-        "LLM extracts evidence and explanations; ESCO skill IDs are selected through embedding search against the local Supabase taxonomy.",
+        "LLM extracts distinct skills and explanations; each extracted skill is sent to the ESCO vector search with match_count = 3, and ESCO skill IDs are selected from those grounded candidates.",
     },
   });
 }

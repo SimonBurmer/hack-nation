@@ -44,10 +44,19 @@ type ProfileSkill = {
 type EvidenceItem = {
   id: string;
   category: string;
+  skill_label?: string;
   evidence_quote: string;
   competency: string;
   plain_language_label: string;
   mapped?: boolean;
+};
+
+type OccupationRequiredSkill = {
+  skill_uri: string;
+  skill_label: string;
+  relation_types: string[];
+  skill_types: string[];
+  person_has: boolean;
 };
 
 type OccupationPath = {
@@ -55,6 +64,14 @@ type OccupationPath = {
   preferred_label: string;
   relation_types: string[];
   matched_skill_labels: string[];
+  required_skills?: OccupationRequiredSkill[];
+  matched_required_skills?: OccupationRequiredSkill[];
+  required_skill_count?: number;
+  matched_skill_count?: number;
+  essential_skill_count?: number;
+  matched_essential_skill_count?: number;
+  skill_coverage?: number;
+  rank_score?: number;
   explanation: string;
 };
 
@@ -62,10 +79,12 @@ type SkillProfile = {
   person_summary: string;
   education: string;
   languages: string[];
+  extracted_skills?: EvidenceItem[];
   experience_evidence: EvidenceItem[];
   unmapped_evidence: EvidenceItem[];
   grounding_trace: Array<{
     evidence_id: string;
+    extracted_skill?: string;
     evidence_quote: string;
     database_query: string;
     top_skill_candidates: Array<{
@@ -503,7 +522,7 @@ export function SearchClient() {
           stage === "extracting" ? "grounding" : stage,
         );
         setProfileStatus(
-          "Calculating: extracting skill evidence, matching ESCO skills, and preparing explanations.",
+          "Calculating: the LLM is extracting skills, then RAG is querying ESCO for the top 3 matches per skill.",
         );
       }, 600);
 
@@ -715,8 +734,9 @@ export function SearchClient() {
             Building the portable skills profile
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-stone-600">
-            The engine is extracting skill evidence, grounding it in ESCO, and
-            preparing explanations that a non-expert user can understand.
+            The engine is asking the LLM to extract all skills, querying ESCO
+            for the top 3 matches per extracted skill, and preparing
+            explanations that a non-expert user can understand.
           </p>
 
           <div className="relative mx-auto mt-8 h-40 w-40">
@@ -739,7 +759,7 @@ export function SearchClient() {
                   : "border-stone-300 bg-stone-100 text-stone-600"
               }`}
             >
-              Extracting evidence
+              LLM extracts skills
             </span>
             <span
               className={`rounded border px-3 py-2 font-medium ${
@@ -748,7 +768,7 @@ export function SearchClient() {
                   : "border-stone-300 bg-stone-100 text-stone-600"
               }`}
             >
-              Matching ESCO skills
+              RAG finds ESCO top 3
             </span>
           </div>
 
@@ -767,6 +787,8 @@ export function SearchClient() {
   }
 
   function renderResultsView(currentProfile: SkillProfile) {
+    const extractedSkills =
+      currentProfile.extracted_skills ?? currentProfile.experience_evidence;
     const strongSkills = currentProfile.skills.filter(
       (skill) => skill.confidence === "strong",
     ).length;
@@ -786,26 +808,27 @@ export function SearchClient() {
                 Transparent ESCO grounding audit
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-600">
-                This screen shows the actual query sent to the skills database,
-                the top fitting ESCO skills with cosine similarity, and the jobs
-                selected from those grounded skills.
+                This screen shows the full pipeline: required data collected,
+                skills extracted by the LLM, each RAG query sent to the ESCO
+                skills database, the top 3 ESCO matches with cosine similarity,
+                and the jobs selected from grounded skills.
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3">
                 <p className="text-2xl font-semibold text-stone-950">
-                  {currentProfile.grounding_trace.length}
+                  {extractedSkills.length}
                 </p>
                 <p className="mt-1 text-xs font-medium text-stone-500">
-                  DB queries
+                  LLM skills
                 </p>
               </div>
               <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3">
                 <p className="text-2xl font-semibold text-stone-950">
-                  {currentProfile.skills.length}
+                  {currentProfile.grounding_trace.length}
                 </p>
                 <p className="mt-1 text-xs font-medium text-stone-500">
-                  Skills
+                  RAG queries
                 </p>
               </div>
               <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3">
@@ -902,11 +925,77 @@ export function SearchClient() {
         <section className="rounded-md border border-stone-300 bg-white shadow-sm">
           <div className="border-b border-stone-200 px-4 py-3">
             <h2 className="text-base font-semibold text-stone-950">
-              Query log: skills database
+              Open process trace
             </h2>
             <p className="mt-1 text-sm leading-6 text-stone-600">
-              Every row below is one evidence item embedded and sent to the ESCO
-              vector search. The scores shown are cosine similarity.
+              The app first checks the required survey data, then asks the LLM
+              to extract distinct skills, then sends each extracted skill to the
+              ESCO skills database for the top 3 semantic matches.
+            </p>
+          </div>
+          <div className="grid gap-0 md:grid-cols-3">
+            <div className="border-b border-stone-200 px-4 py-4 md:border-b-0 md:border-r">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
+                1. Required data
+              </p>
+              <p className="mt-2 text-sm leading-6 text-stone-800">
+                Age: {surveyData.age || "-"}
+                <br />
+                City: {surveyData.city || "-"}
+                <br />
+                User-provided skills: {surveyData.skills.join(", ") || "-"}
+              </p>
+            </div>
+            <div className="border-b border-stone-200 px-4 py-4 md:border-b-0 md:border-r">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
+                2. LLM extracted skills
+              </p>
+              {extractedSkills.length === 0 ? (
+                <p className="mt-2 text-sm text-stone-500">
+                  No extracted skills returned.
+                </p>
+              ) : (
+                <ol className="mt-2 space-y-2 text-sm text-stone-800">
+                  {extractedSkills.map((skill, index) => (
+                    <li key={`${skill.id}-${index}`} className="leading-5">
+                      <span className="font-medium text-stone-950">
+                        {index + 1}.{" "}
+                        {skill.skill_label || skill.plain_language_label}
+                      </span>
+                      <br />
+                      <span className="text-xs text-stone-500">
+                        Evidence: {skill.evidence_quote}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+            <div className="px-4 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
+                3. ESCO RAG matching
+              </p>
+              <p className="mt-2 text-sm leading-6 text-stone-800">
+                Each extracted skill is embedded and sent to the existing
+                Supabase ESCO vector search endpoint with{" "}
+                <code className="rounded bg-stone-100 px-1 py-0.5 text-xs">
+                  match_count = 3
+                </code>
+                . The query log below shows the exact query text and the top 3
+                ESCO results.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-md border border-stone-300 bg-white shadow-sm">
+          <div className="border-b border-stone-200 px-4 py-3">
+            <h2 className="text-base font-semibold text-stone-950">
+              Query log: RAG calls to the skills database
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-stone-600">
+              Every row below is one LLM-extracted skill embedded and sent to
+              the ESCO vector search. The scores shown are cosine similarity.
             </p>
           </div>
 
@@ -923,16 +1012,19 @@ export function SearchClient() {
                 >
                   <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                      Evidence {index + 1}
+                      LLM extracted skill {index + 1}
                     </p>
+                    <h3 className="mt-2 text-base font-semibold text-stone-950">
+                      {trace.extracted_skill || "Extracted skill"}
+                    </h3>
                     <p className="mt-2 text-sm leading-6 text-stone-800">
                       <span className="font-medium text-stone-950">
-                        You said:
+                        User evidence:
                       </span>{" "}
                       {trace.evidence_quote}
                     </p>
                     <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                      Query sent to ESCO skills database
+                      RAG query sent to ESCO skills database
                     </p>
                     <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded border border-stone-200 bg-stone-50 p-3 text-xs leading-5 text-stone-800">
                       {trace.database_query}
@@ -941,7 +1033,7 @@ export function SearchClient() {
 
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                      Top fitting skills
+                      Top 3 ESCO matches
                     </p>
                     {trace.top_skill_candidates.length === 0 ? (
                       <p className="mt-2 text-sm text-stone-500">
@@ -982,9 +1074,9 @@ export function SearchClient() {
               Best fitting jobs based on these skills
             </h2>
             <p className="mt-1 text-sm leading-6 text-stone-600">
-              Jobs come from ESCO occupation-skill relations for the selected
-              grounded skills. Fit means ESCO marks the skill as essential,
-              optional, or another relation type for that occupation.
+              Jobs are ranked by how many ESCO skills for that occupation the
+              person already has. Each job shows the full ESCO skill list and
+              marks skills the person has.
             </p>
           </div>
 
@@ -997,33 +1089,92 @@ export function SearchClient() {
               {currentProfile.occupation_paths.map((path, index) => (
                 <li
                   key={path.occupation_uri}
-                  className="grid gap-3 px-4 py-4 lg:grid-cols-[3rem_minmax(0,1fr)_18rem]"
+                  className="grid gap-4 px-4 py-4 lg:grid-cols-[3rem_minmax(0,1fr)]"
                 >
                   <p className="text-2xl font-semibold text-teal-800">
                     {index + 1}
                   </p>
                   <div className="min-w-0">
-                    <h3 className="text-base font-semibold text-stone-950">
-                      {path.preferred_label}
-                    </h3>
-                    <p className="mt-1 break-all text-xs text-stone-500">
-                      {path.occupation_uri}
-                    </p>
-                    <p className="mt-3 text-sm leading-6 text-stone-700">
-                      {path.explanation}
-                    </p>
-                  </div>
-                  <div className="space-y-2 text-sm text-stone-700">
-                    <p>
-                      <span className="font-medium text-stone-950">Fit:</span>{" "}
-                      {path.relation_types.join(", ") || "-"}
-                    </p>
-                    <p>
-                      <span className="font-medium text-stone-950">
-                        Based on skills:
-                      </span>{" "}
-                      {path.matched_skill_labels.join(", ") || "-"}
-                    </p>
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                      <div>
+                        <h3 className="text-base font-semibold text-stone-950">
+                          {path.preferred_label}
+                        </h3>
+                        <p className="mt-1 break-all text-xs text-stone-500">
+                          {path.occupation_uri}
+                        </p>
+                        <p className="mt-3 text-sm leading-6 text-stone-700">
+                          {path.explanation}
+                        </p>
+                      </div>
+                      <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3 text-sm text-stone-700">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
+                          Skill fit
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-teal-800">
+                          {path.matched_skill_count ??
+                            path.matched_skill_labels.length}
+                          /{path.required_skill_count ?? "-"}
+                        </p>
+                        <p className="mt-1 text-xs text-stone-500">
+                          skills matched
+                        </p>
+                        <p className="mt-3 text-sm">
+                          Essential:{" "}
+                          {path.matched_essential_skill_count ?? 0}/
+                          {path.essential_skill_count ?? "-"}
+                        </p>
+                        <p className="mt-1 text-sm">
+                          Coverage:{" "}
+                          {typeof path.skill_coverage === "number"
+                            ? `${Math.round(path.skill_coverage * 100)}%`
+                            : "-"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
+                        All skills listed for this job
+                      </p>
+                      {path.required_skills?.length ? (
+                        <div className="mt-2 grid max-h-72 gap-2 overflow-auto rounded border border-stone-200 bg-white p-2 sm:grid-cols-2">
+                          {path.required_skills.map((skill) => (
+                            <div
+                              key={skill.skill_uri}
+                              className={`rounded border px-3 py-2 text-sm ${
+                                skill.person_has
+                                  ? "border-teal-300 bg-teal-50 text-teal-950"
+                                  : "border-stone-200 bg-stone-50 text-stone-700"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-medium">
+                                  {skill.skill_label}
+                                </span>
+                                <span
+                                  className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
+                                    skill.person_has
+                                      ? "bg-teal-800 text-white"
+                                      : "bg-stone-200 text-stone-700"
+                                  }`}
+                                >
+                                  {skill.person_has ? "Has" : "Gap"}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs opacity-80">
+                                {skill.relation_types.join(", ") ||
+                                  "relation not specified"}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-stone-500">
+                          Full skill list was not returned for this occupation.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </li>
               ))}
@@ -1307,7 +1458,7 @@ export function SearchClient() {
                           : "border-stone-300 bg-stone-100 text-stone-600"
                       }`}
                     >
-                      Extracting evidence
+                      LLM extracts skills
                     </span>
                     <span
                       className={`rounded border px-2 py-1 ${
@@ -1316,7 +1467,7 @@ export function SearchClient() {
                           : "border-stone-300 bg-stone-100 text-stone-600"
                       }`}
                     >
-                      Matching ESCO skills
+                      RAG finds ESCO top 3
                     </span>
                   </div>
                   {isGeneratingProfile ? (
