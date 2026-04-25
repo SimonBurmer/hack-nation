@@ -56,6 +56,17 @@ Test semantic search:
 npm run search -- "manage a team of musicians"
 ```
 
+Run the Next.js search UI:
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Fill `web/.env.local` with `OPENAI_API_KEY`. The Supabase URL and publishable key are already shown in `web/.env.example`.
+
 ## Project Structure
 
 ```text
@@ -69,6 +80,8 @@ npm run search -- "manage a team of musicians"
 │   └── setup-db.js
 ├── supabase/
 │   └── schema.sql
+├── web/
+│   └── Next.js search UI
 ├── .env.example
 ├── package.json
 └── README.md
