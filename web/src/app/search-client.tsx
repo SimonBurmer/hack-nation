@@ -59,6 +59,7 @@ type IntakeAnalysis = SurveyData & {
 
 type CalculationStage = "idle" | "collected" | "extracting" | "grounding" | "done";
 type ViewPhase = "chat" | "loading" | "results";
+type JourneyStep = "discover" | "ground" | "review";
 
 type EvidenceItem = {
   id: string;
@@ -68,6 +69,16 @@ type EvidenceItem = {
   competency: string;
   plain_language_label: string;
   mapped?: boolean;
+};
+
+type IdentifiedSkill = {
+  concept_uri: string;
+  preferred_label: string;
+  user_skill: string;
+  evidence_quote: string;
+  database_query: string;
+  similarity: number;
+  confidence: "strong" | "medium" | "needs_review";
 };
 
 type OccupationRequiredSkill = {
@@ -114,6 +125,7 @@ type SkillProfile = {
       similarity: number;
     }>;
   }>;
+  identified_skills?: IdentifiedSkill[];
   occupation_paths: OccupationPath[];
   export_metadata: {
     generated_at: string;
@@ -153,7 +165,7 @@ const emptySurveyData: SurveyData = {
 };
 
 const firstSurveyPrompt =
-  "Hi. What kind of work would you enjoy, and what have you done before? Share anything useful; I will ask only for what is missing.";
+  "Hi, I am Milo. I can build your SkillRoute profile. Tell me your age, location, languages, education, work authorization, experience, and the skills you want mapped. Share anything useful; I will ask only for what is missing.";
 
 const amaraDemoMessages: ChatMessage[] = [
   {
@@ -259,13 +271,13 @@ function promptForMissingFields(data: SurveyData) {
   const missing = missingSurveyFields(data);
 
   if (missing.length === 0) {
-    return "Thanks. I have the important intake data. I am generating the analysis now.";
+    return "I have the important intake data now. I am building your RouteMap and matching it against ESCO.";
   }
 
-  return `Thanks. I still need: ${missing
+  return `I still need your ${missing
     .slice(0, 3)
     .map((field) => requiredFieldLabels[field])
-    .join(", ")}.`;
+    .join(", ")}. Send ${missing.length === 1 ? "it" : "them"} when you are ready.`;
 }
 
 function messagesForProfile(messages: ChatMessage[], data: SurveyData) {
@@ -277,7 +289,7 @@ function messagesForProfile(messages: ChatMessage[], data: SurveyData) {
     {
       role: "assistant" as const,
       content:
-        "Structured skill discovery intake captured for grounding.",
+        "Structured SkillRoute intake captured for grounding: profile details, evidence, and skills.",
     },
     {
       role: "user" as const,
@@ -354,6 +366,32 @@ function requiredFieldValue(data: SurveyData, field: RequiredSurveyField) {
     case "demonstrated_competencies":
       return listText(data.demonstrated_competencies ?? []);
   }
+}
+
+function skillConfidenceLabel(confidence: IdentifiedSkill["confidence"]) {
+  if (confidence === "strong") return "Strong ESCO fit";
+  if (confidence === "medium") return "Good ESCO fit";
+  return "Review fit";
+}
+
+function skillConfidenceFromSimilarity(
+  similarity: number,
+): IdentifiedSkill["confidence"] {
+  if (similarity >= 0.78) return "strong";
+  if (similarity >= 0.65) return "medium";
+  return "needs_review";
+}
+
+function skillConfidenceClass(confidence: IdentifiedSkill["confidence"]) {
+  if (confidence === "strong") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-950";
+  }
+
+  if (confidence === "medium") {
+    return "border-sky-300 bg-sky-50 text-sky-950";
+  }
+
+  return "border-amber-300 bg-amber-50 text-amber-950";
 }
 
 export function SearchClient() {
@@ -492,7 +530,7 @@ export function SearchClient() {
     setError("");
     setViewPhase("loading");
     setCalculationStage("extracting");
-    setProfileStatus("Important intake data is collected. Calculating the profile now.");
+    setProfileStatus("Milo is extracting skill signals from the conversation.");
     setIsGeneratingProfile(true);
 
     try {
@@ -501,7 +539,7 @@ export function SearchClient() {
           stage === "extracting" ? "grounding" : stage,
         );
         setProfileStatus(
-          "Calculating: the LLM is extracting skills, then RAG is querying ESCO for the top 3 matches per skill.",
+          "Milo is grounding the signals against ESCO and building RouteMap.",
         );
       }, 600);
 
@@ -537,7 +575,7 @@ export function SearchClient() {
       setProfile(payload);
       setCalculationStage("done");
       setViewPhase("results");
-      setProfileStatus("Profile generated. Review low-confidence skills before sharing.");
+      setProfileStatus("RouteMap generated.");
     } catch (profileError) {
       setProfile(null);
       setCalculationStage("idle");
@@ -564,8 +602,7 @@ export function SearchClient() {
       ...amaraDemoMessages,
       {
         role: "assistant",
-        content:
-          "Thanks. I have the important intake data. I am generating the analysis now.",
+        content: "I have Amara's core signal. I am building her RouteMap now.",
       },
     ]);
     void generateProfile(amaraDemoMessages, amaraSurveyData);
@@ -574,7 +611,7 @@ export function SearchClient() {
   async function copyProfileJson() {
     if (!profileJson) return;
     await navigator.clipboard.writeText(profileJson);
-    setProfileStatus("Portable profile JSON copied.");
+    setProfileStatus("SkillRoute JSON copied.");
   }
 
   function downloadProfileJson() {
@@ -584,7 +621,7 @@ export function SearchClient() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "skills-profile.json";
+    link.download = "skillroute-profile.json";
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -610,40 +647,319 @@ export function SearchClient() {
     setProfileInput("");
   }
 
-  function renderLoadingScreen() {
-    return (
-      <section className="mx-auto grid min-h-[34rem] w-full max-w-4xl place-items-center rounded-md border border-stone-300 bg-white px-5 py-10 shadow-sm">
-        <div className="w-full max-w-2xl text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">
-            Data collected
-          </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-normal text-stone-950">
-            Building the portable skills profile
-          </h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-stone-600">
-            The engine is asking the LLM to extract all skills, querying ESCO
-            for the top 3 matches per extracted skill, and preparing
-            explanations that a non-expert user can understand.
-          </p>
+  function renderProcessOverview(activeStep: JourneyStep) {
+    const steps: Array<{
+      id: JourneyStep;
+      title: string;
+      description: string;
+    }> = [
+      {
+        id: "discover",
+        title: "Talk with Milo",
+        description: "Share age, location, lived experience, tools, and skills.",
+      },
+      {
+        id: "ground",
+        title: "Ground in ESCO",
+        description: "SkillRoute maps the evidence to portable skill IDs.",
+      },
+      {
+        id: "review",
+        title: "Review RouteMap",
+        description: "See the final skill profile and best fitting jobs.",
+      },
+    ];
+    const activeIndex = steps.findIndex((step) => step.id === activeStep);
 
-          <div className="relative mx-auto mt-8 h-40 w-40">
-            <div className="absolute inset-0 rounded-full border-8 border-stone-100" />
-            <div className="absolute inset-0 animate-spin rounded-full border-8 border-transparent border-t-teal-700 border-r-amber-400" />
-            <div className="absolute inset-8 rounded-full border border-stone-200 bg-[#f7f8f5]" />
-            <div className="absolute inset-0 grid place-items-center text-sm font-semibold text-teal-900">
-              ESCO
+    return (
+      <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
+        <div className="border-b border-zinc-200 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+            User journey
+          </p>
+          <h2 className="mt-1 text-lg font-semibold text-zinc-950">
+            From unmapped experience to a portable RouteMap
+          </h2>
+        </div>
+        <ol className="grid gap-0 md:grid-cols-3">
+          {steps.map((step, index) => {
+            const isActive = index === activeIndex;
+            const isDone = index < activeIndex;
+
+            return (
+              <li
+                key={step.id}
+                className={`border-b border-zinc-200 px-4 py-4 md:border-b-0 md:border-r md:last:border-r-0 ${
+                  isActive
+                    ? "bg-cyan-50"
+                    : isDone
+                      ? "bg-emerald-50"
+                      : "bg-white"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-full border text-sm font-semibold ${
+                      isActive
+                        ? "border-cyan-700 bg-cyan-700 text-white"
+                        : isDone
+                          ? "border-emerald-700 bg-emerald-700 text-white"
+                          : "border-zinc-300 bg-zinc-100 text-zinc-700"
+                    }`}
+                  >
+                    {index + 1}
+                  </span>
+                  <div>
+                    <p className="font-semibold text-zinc-950">{step.title}</p>
+                    <p className="mt-1 text-sm leading-6 text-zinc-600">
+                      {step.description}
+                    </p>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+    );
+  }
+
+  function renderMiloChat() {
+    const completedRequiredCount = requiredFieldKeys.length - surveyMissing.length;
+    const intakeSignalFields = requiredFieldKeys.map((field) => ({
+      field,
+      label: requiredFieldLabels[field],
+      value: requiredFieldValue(surveyData, field),
+    }));
+
+    return (
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="overflow-hidden rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="border-b border-zinc-200 bg-zinc-950 px-4 py-4 text-white">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
+              Skill Discovery Engine
+            </p>
+            <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-normal">
+                  Milo
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-zinc-300">
+                  An AI skills navigator that turns informal experience into
+                  portable ESCO signals.
+                </p>
+              </div>
+              <span className="rounded border border-cyan-300/40 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-100">
+                Agent online
+              </span>
             </div>
           </div>
 
-          <div className="mt-8 grid gap-2 text-sm sm:grid-cols-3">
-            <span className="rounded border border-teal-300 bg-teal-50 px-3 py-2 font-medium text-teal-950">
-              Important intake captured
+          <div className="max-h-[32rem] space-y-3 overflow-y-auto bg-[#f9faf7] px-4 py-4">
+            {profileMessages.map((message, index) => (
+              <div
+                key={`${message.role}-${index}`}
+                className={
+                  message.role === "user"
+                    ? "ml-auto max-w-[88%] rounded-md bg-cyan-800 px-3 py-2 text-sm leading-6 text-white"
+                    : "max-w-[88%] rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 text-zinc-800 shadow-sm"
+                }
+              >
+                {message.role === "assistant" ? (
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-700">
+                    Milo
+                  </p>
+                ) : null}
+                {message.content}
+              </div>
+            ))}
+          </div>
+
+          <form
+            onSubmit={addInterviewMessage}
+            className="grid gap-3 border-t border-zinc-200 bg-white p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+          >
+            <textarea
+              value={profileInput}
+              onChange={(event) => setProfileInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="Tell Milo: age, location, education, languages, informal work, tools, and skills..."
+              className="min-h-28 resize-y rounded-md border border-zinc-300 bg-white px-3 py-2 text-base leading-6 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/15"
+              disabled={isAnalyzingIntake || isGeneratingProfile}
+            />
+            <div className="flex flex-col gap-2">
+              <Button
+                type="submit"
+                className="h-11 rounded-md bg-zinc-950 px-5 text-white hover:bg-cyan-800"
+                disabled={isAnalyzingIntake || isGeneratingProfile}
+              >
+                {isAnalyzingIntake ? "Reading" : "Send to Milo"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-md border-zinc-300 px-5"
+                onClick={loadAmaraDemo}
+              >
+                Load Amara
+              </Button>
+            </div>
+          </form>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 px-3 py-3">
+            <Button
+              type="button"
+              className="h-11 rounded-md bg-cyan-800 px-5 text-white hover:bg-zinc-950"
+              disabled={
+                isAnalyzingIntake ||
+                isGeneratingProfile ||
+                surveyMissing.length > 0
+              }
+              onClick={() => void generateProfile()}
+            >
+              {isAnalyzingIntake
+                ? "Reading message"
+                : isGeneratingProfile
+                ? "Generating RouteMap"
+                : surveyMissing.length > 0
+                  ? "Waiting for required info"
+                  : "Generate RouteMap"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-md border-zinc-300 px-5"
+              onClick={resetSurvey}
+            >
+              Reset
+            </Button>
+            {profileStatus ? (
+              <p className="text-sm text-zinc-600">{profileStatus}</p>
+            ) : null}
+          </div>
+        </div>
+
+        <aside className="grid gap-4">
+          <div className="rounded-md border border-zinc-300 bg-white p-4 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+              Intake signal
+            </p>
+            <div className="mt-3 rounded border border-zinc-200 bg-zinc-50 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-zinc-950">
+                  Required intake
+                </span>
+                <span
+                  className={`rounded px-2 py-1 text-xs font-semibold ${
+                    surveyMissing.length === 0
+                      ? "bg-emerald-100 text-emerald-950"
+                      : "bg-amber-100 text-amber-950"
+                  }`}
+                >
+                  {completedRequiredCount}/{requiredFieldKeys.length}
+                </span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-200">
+                <div
+                  className="h-full rounded-full bg-cyan-700 transition-all"
+                  style={{
+                    width: `${Math.round(
+                      (completedRequiredCount / requiredFieldKeys.length) * 100,
+                    )}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-xs leading-5 text-zinc-600">
+                {surveyMissing.length === 0
+                  ? "Ready to generate a RouteMap."
+                  : `Still needed: ${surveyMissing
+                      .slice(0, 3)
+                      .map((field) => requiredFieldLabels[field])
+                      .join(", ")}${surveyMissing.length > 3 ? "..." : ""}.`}
+              </p>
+            </div>
+
+            <div className="mt-3 grid gap-2 text-sm">
+              {intakeSignalFields.map(({ field, label, value }) => (
+                <div
+                  key={field}
+                  className={`rounded border px-3 py-2 ${
+                    value
+                      ? "border-emerald-200 bg-emerald-50"
+                      : "border-zinc-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-zinc-600">{label}</span>
+                    <span
+                      className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
+                        value
+                          ? "bg-emerald-800 text-white"
+                          : "bg-zinc-200 text-zinc-700"
+                      }`}
+                    >
+                      {value ? "Captured" : "Needed"}
+                    </span>
+                  </div>
+                  {value ? (
+                    <p className="mt-1 truncate text-xs text-zinc-700">
+                      {value}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 text-center text-xs">
+              <div className="rounded border border-zinc-200 bg-zinc-50 px-2 py-2">
+                <p className="text-lg font-semibold text-zinc-950">
+                  {surveyData.skills.length}
+                </p>
+                <p className="font-medium text-zinc-500">Skills</p>
+              </div>
+              <div className="rounded border border-zinc-200 bg-zinc-50 px-2 py-2">
+                <p className="text-lg font-semibold text-zinc-950">
+                  {surveyData.demonstrated_competencies.length}
+                </p>
+                <p className="font-medium text-zinc-500">Evidence</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+    );
+  }
+
+  function renderLoadingScreen() {
+    return (
+      <section className="mx-auto grid min-h-[34rem] w-full max-w-4xl place-items-center rounded-md border border-zinc-300 bg-white px-5 py-10 shadow-sm">
+        <div className="w-full max-w-2xl text-center">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+            Milo is working
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold tracking-normal text-zinc-950">
+            Building the RouteMap
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-600">
+            SkillRoute is extracting skill signals, matching them to ESCO, and
+            ranking occupations by how much of each job skill profile is already
+            present.
+          </p>
+
+          <div className="mx-auto mt-8 grid max-w-xl gap-2 text-left text-sm sm:grid-cols-3">
+            <span className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 font-medium text-emerald-950">
+              Intake captured
             </span>
             <span
               className={`rounded border px-3 py-2 font-medium ${
                 ["extracting", "grounding", "done"].includes(calculationStage)
-                  ? "border-teal-300 bg-teal-50 text-teal-950"
-                  : "border-stone-300 bg-stone-100 text-stone-600"
+                  ? "border-sky-300 bg-sky-50 text-sky-950"
+                  : "border-zinc-300 bg-zinc-100 text-zinc-600"
               }`}
             >
               LLM extracts skills
@@ -651,20 +967,20 @@ export function SearchClient() {
             <span
               className={`rounded border px-3 py-2 font-medium ${
                 ["grounding", "done"].includes(calculationStage)
-                  ? "border-teal-300 bg-teal-50 text-teal-950"
-                  : "border-stone-300 bg-stone-100 text-stone-600"
+                  ? "border-violet-300 bg-violet-50 text-violet-950"
+                  : "border-zinc-300 bg-zinc-100 text-zinc-600"
               }`}
             >
-              RAG finds ESCO top 3
+              ESCO grounding
             </span>
           </div>
 
-          <div className="mt-6 h-2 overflow-hidden rounded-full bg-stone-200">
-            <div className="h-full w-3/4 animate-pulse rounded-full bg-teal-700" />
+          <div className="mx-auto mt-8 h-2 max-w-xl overflow-hidden rounded-full bg-zinc-200">
+            <div className="h-full w-3/4 animate-pulse rounded-full bg-cyan-700" />
           </div>
 
           {profileStatus ? (
-            <p className="mt-4 text-sm font-medium text-stone-700">
+            <p className="mt-4 text-sm font-medium text-zinc-700">
               {profileStatus}
             </p>
           ) : null}
@@ -676,311 +992,302 @@ export function SearchClient() {
   function renderResultsView(currentProfile: SkillProfile) {
     const extractedSkills =
       currentProfile.extracted_skills ?? currentProfile.experience_evidence;
+    const identifiedSkills =
+      currentProfile.identified_skills ??
+      currentProfile.grounding_trace.flatMap((trace) => {
+        const bestCandidate = trace.top_skill_candidates[0];
+        if (!bestCandidate) return [];
+
+        return [
+          {
+            concept_uri: bestCandidate.concept_uri,
+            preferred_label: bestCandidate.preferred_label,
+            user_skill: trace.extracted_skill || "Extracted skill",
+            evidence_quote: trace.evidence_quote,
+            database_query: trace.database_query,
+            similarity: bestCandidate.similarity,
+            confidence: skillConfidenceFromSimilarity(bestCandidate.similarity),
+          },
+        ];
+      });
+    const topJobs = currentProfile.occupation_paths;
+    const topJob = topJobs[0];
 
     return (
       <section className="grid gap-5">
-        <div className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
+        <div className="rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="grid gap-5 px-4 py-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">
-                Analysis results
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+                RouteMap
               </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-normal text-stone-950">
-                Transparent ESCO grounding audit
+              <h2 className="mt-2 text-3xl font-semibold tracking-normal text-zinc-950">
+                Opportunity map for {surveyData.location || "this profile"}
               </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-600">
-                This screen shows the full pipeline: required data collected,
-                skills extracted by the LLM, each RAG query sent to the ESCO
-                skills database, the top 3 ESCO matches with cosine similarity,
-                and the jobs selected from grounded skills.
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
+                Milo converted the conversation into a portable skill profile,
+                grounded it in ESCO, and ranked occupations by skill overlap.
+                The system steps come first as collapsed panels, followed by
+                the final skills and jobs.
               </p>
             </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3">
-                <p className="text-2xl font-semibold text-stone-950">
-                  {extractedSkills.length}
-                </p>
-                <p className="mt-1 text-xs font-medium text-stone-500">
-                  LLM skills
-                </p>
-              </div>
-              <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3">
-                <p className="text-2xl font-semibold text-stone-950">
-                  {currentProfile.grounding_trace.length}
-                </p>
-                <p className="mt-1 text-xs font-medium text-stone-500">
-                  RAG queries
-                </p>
-              </div>
-              <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3">
-                <p className="text-2xl font-semibold text-stone-950">
-                  {currentProfile.occupation_paths.length}
-                </p>
-                <p className="mt-1 text-xs font-medium text-stone-500">
-                  Jobs
-                </p>
-              </div>
-            </div>
-          </div>
 
-          <div className="grid gap-0 border-t border-stone-200 md:grid-cols-3">
-            <div className="border-b border-stone-200 px-4 py-3 md:border-b-0 md:border-r">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                Pipeline status
-              </p>
-              <dl className="mt-2 space-y-1 text-sm leading-6 text-stone-800">
-                {requiredFieldKeys.slice(0, 5).map((field) => (
-                  <div key={field}>
-                    <dt className="inline font-medium">
-                      {requiredFieldLabels[field]}:{" "}
-                    </dt>
-                    <dd className="inline">
-                      {requiredFieldValue(surveyData, field) || "-"}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="mt-2 text-xs leading-5 text-stone-500">
-                Then the LLM extracts skills, RAG retrieves ESCO top 3 matches,
-                and jobs are ranked.
-              </p>
-            </div>
-            <div className="border-b border-stone-200 px-4 py-3 md:border-b-0 md:border-r">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                ESCO matching
-              </p>
-              <p className="mt-2 text-sm leading-6 text-stone-800">
-                The RAG trace lists every ESCO top 3 result.
-                <br />
-                Jobs are calculated from accepted ESCO skill IDs.
-                <br />
-                Low-quality matches are left out before job ranking.
-              </p>
-            </div>
-            <div className="px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                Profile export
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 rounded-md border-stone-300 px-3 text-xs"
-                  onClick={() => void copyProfileJson()}
-                >
-                  Copy JSON
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 rounded-md border-stone-300 px-3 text-xs"
-                  onClick={viewProfileJson}
-                >
-                  View JSON
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 rounded-md border-stone-300 px-3 text-xs"
-                  onClick={downloadProfileJson}
-                >
-                  Download
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 rounded-md border-stone-300 px-3 text-xs"
-                  onClick={() => window.print()}
-                >
-                  Print
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 rounded-md border-stone-300 px-3 text-xs"
-                  onClick={resetSurvey}
-                >
-                  New chat
-                </Button>
-              </div>
-              {profileStatus ? (
-                <p className="mt-2 text-xs font-medium text-stone-600">
-                  {profileStatus}
+            <div className="grid gap-2">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                  Best fit
                 </p>
-              ) : null}
+                <p className="mt-2 text-lg font-semibold text-zinc-950">
+                  {topJob?.preferred_label ?? "No job match yet"}
+                </p>
+                <p className="mt-1 text-sm text-zinc-600">
+                  {topJob
+                    ? `${topJob.matched_skill_count ?? 0} matched skills`
+                    : "Try adding more skill detail."}
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded border border-zinc-200 bg-white px-3 py-3">
+                  <p className="text-2xl font-semibold text-zinc-950">
+                    {identifiedSkills.length}
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-zinc-500">
+                    ESCO skills
+                  </p>
+                </div>
+                <div className="rounded border border-zinc-200 bg-white px-3 py-3">
+                  <p className="text-2xl font-semibold text-zinc-950">
+                    {topJobs.length}
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-zinc-500">
+                    Jobs
+                  </p>
+                </div>
+                <div className="rounded border border-zinc-200 bg-white px-3 py-3">
+                  <p className="text-2xl font-semibold text-zinc-950">
+                    {extractedSkills.length}
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-zinc-500">
+                    Signals
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800">
+                  What is ESCO?
+                </p>
+                <p className="mt-2 text-sm leading-6 text-cyan-950">
+                  ESCO is the European Skills, Competences, Qualifications and
+                  Occupations taxonomy. SkillRoute uses it as a shared language
+                  so lived experience can become portable skill IDs and job
+                  matches.
+                </p>
+              </div>
             </div>
           </div>
         </div>
 
-        <section className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="border-b border-stone-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-stone-950">
-              Step 1: collected data
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">
-              These are the required fields gathered in the chat before any LLM
-              or ESCO matching runs.
-            </p>
-          </div>
-          <div className="divide-y divide-stone-200">
-            <div className="grid gap-2 px-4 py-4 md:grid-cols-[12rem_minmax(0,1fr)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
-                Important fields
-              </p>
-              <dl className="mt-2 space-y-1 text-sm leading-6 text-stone-800">
-                {requiredFieldKeys.map((field) => (
-                  <div key={field}>
-                    <dt className="inline font-medium">
-                      {requiredFieldLabels[field]}:{" "}
-                    </dt>
-                    <dd className="inline">
-                      {requiredFieldValue(surveyData, field) || "-"}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-            <div className="grid gap-2 px-4 py-4 md:grid-cols-[12rem_minmax(0,1fr)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">
-                Raw skills
-              </p>
-              <p className="text-sm leading-6 text-stone-800">
-                {surveyData.skills.join(", ") || "-"}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="border-b border-stone-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-stone-950">
-              Step 2: skills extracted by the LLM
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">
-              The LLM reads the chat transcript and turns the person&apos;s
-              words into distinct skill phrases. These phrases become the RAG
-              queries in the next step.
-            </p>
-          </div>
-          {extractedSkills.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-stone-500">
-              No extracted skills returned.
-            </div>
-          ) : (
-            <ol className="divide-y divide-stone-200">
-              {extractedSkills.map((skill, index) => (
-                <li
-                  key={`${skill.id}-${index}`}
-                  className="grid gap-3 px-4 py-4 lg:grid-cols-[3rem_minmax(0,1fr)_18rem]"
-                >
-                  <p className="text-2xl font-semibold text-teal-800">
-                    {index + 1}
+        <section className="grid gap-3">
+          <details className="rounded-md border border-zinc-300 bg-white shadow-sm">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-950">
+              Step 1: how Milo collected the intake signal
+            </summary>
+            <div className="grid gap-3 border-t border-zinc-200 px-4 py-4 md:grid-cols-2 xl:grid-cols-3">
+              {requiredFieldKeys.map((field) => (
+                <div key={field}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                    {requiredFieldLabels[field]}
                   </p>
-                  <div>
-                    <h3 className="text-base font-semibold text-stone-950">
-                      {skill.skill_label || skill.plain_language_label}
-                    </h3>
-                    <p className="mt-2 text-sm leading-6 text-stone-700">
-                      {skill.evidence_quote}
-                    </p>
-                  </div>
-                  <div className="space-y-1 text-sm text-stone-600">
-                    <p>
-                      <span className="font-medium text-stone-950">
-                        Category:
-                      </span>{" "}
-                      {skill.category || "-"}
-                    </p>
-                    <p>
-                      <span className="font-medium text-stone-950">
-                        Competency:
-                      </span>{" "}
-                      {skill.competency || "-"}
-                    </p>
-                  </div>
-                </li>
+                  <p className="mt-1 text-sm leading-6 text-zinc-800">
+                    {requiredFieldValue(surveyData, field) || "-"}
+                  </p>
+                </div>
               ))}
-            </ol>
-          )}
+              <div className="md:col-span-2 xl:col-span-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                  Raw skills
+                </p>
+                <p className="mt-1 text-sm leading-6 text-zinc-800">
+                  {surveyData.skills.join(", ") || "-"}
+                </p>
+              </div>
+            </div>
+          </details>
+
+          <details className="rounded-md border border-zinc-300 bg-white shadow-sm">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-950">
+              Step 2: skills Milo extracted from the conversation
+            </summary>
+            {extractedSkills.length === 0 ? (
+              <p className="border-t border-zinc-200 px-4 py-4 text-sm text-zinc-500">
+                No extracted skills returned.
+              </p>
+            ) : (
+              <ol className="divide-y divide-zinc-200 border-t border-zinc-200">
+                {extractedSkills.map((skill, index) => (
+                  <li
+                    key={`${skill.id}-${index}`}
+                    className="grid gap-3 px-4 py-3 md:grid-cols-[3rem_minmax(0,1fr)_18rem]"
+                  >
+                    <p className="text-xl font-semibold text-cyan-800">
+                      {index + 1}
+                    </p>
+                    <div>
+                      <p className="font-semibold text-zinc-950">
+                        {skill.skill_label || skill.plain_language_label}
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-zinc-700">
+                        {skill.evidence_quote}
+                      </p>
+                    </div>
+                    <p className="text-sm text-zinc-600">
+                      {skill.category} - {skill.competency || "competency"}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </details>
+
+          <details className="rounded-md border border-zinc-300 bg-white shadow-sm">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-950">
+              Step 3: ESCO grounding trace
+            </summary>
+            {currentProfile.grounding_trace.length === 0 ? (
+              <p className="border-t border-zinc-200 px-4 py-4 text-sm text-zinc-500">
+                No grounding trace was returned.
+              </p>
+            ) : (
+              <div className="divide-y divide-zinc-200 border-t border-zinc-200">
+                {currentProfile.grounding_trace.map((trace, index) => (
+                  <article
+                    key={`${trace.evidence_id}-${index}`}
+                    className="grid gap-4 px-4 py-4 xl:grid-cols-[minmax(0,1fr)_28rem]"
+                  >
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        Query {index + 1}
+                      </p>
+                      <h4 className="mt-2 font-semibold text-zinc-950">
+                        {trace.extracted_skill || "Extracted skill"}
+                      </h4>
+                      <p className="mt-2 text-sm leading-6 text-zinc-700">
+                        Evidence: {trace.evidence_quote}
+                      </p>
+                      <pre className="mt-3 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-800">
+                        {trace.database_query}
+                      </pre>
+                    </div>
+                    <ol className="divide-y divide-zinc-200 rounded border border-zinc-200">
+                      {trace.top_skill_candidates.map((candidate, rank) => (
+                        <li
+                          key={candidate.concept_uri}
+                          className="grid gap-1 px-3 py-2 text-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="font-medium text-zinc-900">
+                              {rank + 1}. {candidate.preferred_label}
+                            </span>
+                            <span className="shrink-0 rounded bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-900">
+                              {candidate.similarity.toFixed(3)}
+                            </span>
+                          </div>
+                          <p className="break-all text-xs text-zinc-500">
+                            {candidate.concept_uri}
+                          </p>
+                        </li>
+                      ))}
+                    </ol>
+                  </article>
+                ))}
+              </div>
+            )}
+          </details>
+
+          <details className="rounded-md border border-zinc-300 bg-white shadow-sm">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-950">
+              Step 4: ranking formula and metadata
+            </summary>
+            <div className="grid gap-4 border-t border-zinc-200 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+              <div>
+                <p className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-xs text-zinc-700">
+                  rankScore = matchedSkills * 100 + matchedEssentialSkills * 25
+                  + skillCoverage * 10 + matchedSimilarity - relationRank
+                </p>
+                <p className="mt-3 text-sm leading-6 text-zinc-600">
+                  The highest ranked jobs are those where the person already
+                  has the largest share of the occupation&apos;s ESCO skills,
+                  especially essential skills.
+                </p>
+              </div>
+              <div className="rounded border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+                <p>
+                  <span className="font-semibold text-zinc-950">Engine:</span>{" "}
+                  {currentProfile.export_metadata.engine_version}
+                </p>
+                <p className="mt-2">
+                  <span className="font-semibold text-zinc-950">Generated:</span>{" "}
+                  {currentProfile.export_metadata.generated_at}
+                </p>
+                <p className="mt-2">
+                  <span className="font-semibold text-zinc-950">Locale:</span>{" "}
+                  {currentProfile.export_metadata.locale}
+                </p>
+              </div>
+            </div>
+          </details>
         </section>
 
-        <section className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="border-b border-stone-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-stone-950">
-              Step 3: RAG calls to the ESCO skills database
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">
-              Every row below is one LLM-extracted skill embedded and sent to
-              the ESCO vector search with{" "}
-              <code className="rounded bg-stone-100 px-1 py-0.5 text-xs">
-                match_count = 3
-              </code>
-              . The scores shown are cosine similarity.
+        <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="border-b border-zinc-200 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+              Final skill profile
+            </p>
+            <h3 className="mt-1 text-xl font-semibold text-zinc-950">
+              Best fitting identified ESCO skills
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-zinc-600">
+              These are the standardized skill IDs SkillRoute selected from the
+              ESCO search. They are portable across sectors and explain where
+              each match came from.
             </p>
           </div>
-
-          {currentProfile.grounding_trace.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-stone-500">
-              No grounding trace was returned.
+          {identifiedSkills.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-zinc-500">
+              No ESCO skills were accepted for this profile.
             </div>
           ) : (
-            <div className="divide-y divide-stone-200">
-              {currentProfile.grounding_trace.map((trace, index) => (
+            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+              {identifiedSkills.map((skill) => (
                 <article
-                  key={`${trace.evidence_id}-${index}`}
-                  className="grid gap-4 px-4 py-4 xl:grid-cols-[minmax(0,1fr)_28rem]"
+                  key={skill.concept_uri}
+                  className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
                 >
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                      LLM extracted skill {index + 1}
-                    </p>
-                    <h3 className="mt-2 text-base font-semibold text-stone-950">
-                      {trace.extracted_skill || "Extracted skill"}
-                    </h3>
-                    <p className="mt-2 text-sm leading-6 text-stone-800">
-                      <span className="font-medium text-stone-950">
-                        User evidence:
-                      </span>{" "}
-                      {trace.evidence_quote}
-                    </p>
-                    <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                      RAG query sent to ESCO skills database
-                    </p>
-                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded border border-stone-200 bg-stone-50 p-3 text-xs leading-5 text-stone-800">
-                      {trace.database_query}
-                    </pre>
+                  <div className="flex items-start justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-zinc-950">
+                      {skill.preferred_label}
+                    </h4>
+                    <span
+                      className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold ${skillConfidenceClass(
+                        skill.confidence,
+                      )}`}
+                    >
+                      {skillConfidenceLabel(skill.confidence)}
+                    </span>
                   </div>
-
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                      Top 3 ESCO matches
-                    </p>
-                    {trace.top_skill_candidates.length === 0 ? (
-                      <p className="mt-2 text-sm text-stone-500">
-                        No ESCO candidates returned.
-                      </p>
-                    ) : (
-                      <ol className="mt-2 divide-y divide-stone-200 rounded border border-stone-200">
-                        {trace.top_skill_candidates.map((candidate, rank) => (
-                          <li
-                            key={candidate.concept_uri}
-                            className="grid gap-1 px-3 py-2 text-sm"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <span className="font-medium text-stone-900">
-                                {rank + 1}. {candidate.preferred_label}
-                              </span>
-                              <span className="shrink-0 rounded bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-900">
-                                {candidate.similarity.toFixed(3)}
-                              </span>
-                            </div>
-                            <p className="break-all text-xs text-stone-500">
-                              {candidate.concept_uri}
-                            </p>
-                          </li>
-                        ))}
-                      </ol>
-                    )}
+                  <p className="mt-2 text-sm leading-6 text-zinc-700">
+                    User signal: {skill.user_skill}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-zinc-500">
+                    Evidence: {skill.evidence_quote}
+                  </p>
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 text-xs">
+                    <span className="break-all text-zinc-500">
+                      {skill.concept_uri}
+                    </span>
+                    <span className="shrink-0 font-semibold text-cyan-800">
+                      {skill.similarity.toFixed(3)}
+                    </span>
                   </div>
                 </article>
               ))}
@@ -988,29 +1295,26 @@ export function SearchClient() {
           )}
         </section>
 
-        <section className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="border-b border-stone-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-stone-950">
-              Best fitting jobs based on these skills
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">
-              Jobs are ranked by how many ESCO skills for that occupation the
-              person already has. Each job shows the full ESCO skill list and
-              marks skills the person has.
+        <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="border-b border-zinc-200 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+              Opportunity matches
             </p>
-            <p className="mt-2 rounded border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-xs text-stone-700">
-              rankScore = matchedSkills * 100 + matchedEssentialSkills * 25 +
-              skillCoverage * 10 + matchedSimilarity - relationRank
+            <h3 className="mt-1 text-xl font-semibold text-zinc-950">
+              Best fitting ESCO jobs
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-zinc-600">
+              Jobs are ranked by overlap between the final skill profile and
+              each occupation&apos;s ESCO skill requirements.
             </p>
           </div>
-
-          {currentProfile.occupation_paths.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-stone-500">
+          {topJobs.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-zinc-500">
               No occupation paths found from the current ESCO matches.
             </div>
           ) : (
-            <ol className="divide-y divide-stone-200">
-              {currentProfile.occupation_paths.map((path, index) => {
+            <ol className="divide-y divide-zinc-200">
+              {topJobs.map((path, index) => {
                 const matchedSkillCount =
                   path.matched_skill_count ?? path.matched_skill_labels.length;
                 const matchedEssentialSkillCount =
@@ -1025,80 +1329,44 @@ export function SearchClient() {
                 return (
                   <li
                     key={path.occupation_uri}
-                    className="grid gap-4 px-4 py-4 lg:grid-cols-[3rem_minmax(0,1fr)]"
+                    className="grid gap-4 px-4 py-4 lg:grid-cols-[3rem_minmax(0,1fr)_18rem]"
                   >
-                    <p className="text-2xl font-semibold text-teal-800">
+                    <p className="text-2xl font-semibold text-cyan-800">
                       {index + 1}
                     </p>
                     <div className="min-w-0">
-                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
-                        <div>
-                          <h3 className="text-base font-semibold text-stone-950">
-                            {path.preferred_label}
-                          </h3>
-                          <p className="mt-1 break-all text-xs text-stone-500">
-                            {path.occupation_uri}
-                          </p>
-                          <p className="mt-3 text-sm leading-6 text-stone-700">
-                            {path.explanation}
-                          </p>
-                        </div>
-                        <div className="rounded border border-stone-200 bg-stone-50 px-3 py-3 text-sm text-stone-700">
-                          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                            Skill fit
-                          </p>
-                          <p className="mt-2 text-2xl font-semibold text-teal-800">
-                            {matchedSkillCount}/{path.required_skill_count ?? "-"}
-                          </p>
-                          <p className="mt-1 text-xs text-stone-500">
-                            skills matched
-                          </p>
-                          <div className="mt-3 space-y-1 text-xs leading-5">
-                            <p>
-                              Matched skills: {matchedSkillCount} * 100 ={" "}
-                              {formatScoreValue(matchedSkillScore, 0)}
-                            </p>
-                            <p>
-                              Matched essential: {matchedEssentialSkillCount} *
-                              25 = {formatScoreValue(matchedEssentialScore, 0)}
-                            </p>
-                            <p>
-                              Coverage: {formatCoverageValue(path.skill_coverage)} *
-                              10 = {formatScoreValue(coverageScore)}
-                            </p>
-                            <p>
-                              Matched similarity:{" "}
-                              {formatScoreValue(path.matched_similarity)}
-                            </p>
-                            <p>
-                              Relation rank penalty: -
-                              {formatScoreValue(path.relation_rank, 0)}
-                            </p>
-                          </div>
-                          <p className="mt-3 border-t border-stone-200 pt-2 text-sm font-semibold text-stone-950">
-                            Final rank score:{" "}
-                            {formatScoreValue(path.rank_score)}
-                          </p>
-                          <p className="mt-1 text-xs text-stone-500">
-                            Coverage shown as{" "}
-                            {formatCoveragePercent(path.skill_coverage)}.
-                          </p>
-                        </div>
+                      <h4 className="text-lg font-semibold text-zinc-950">
+                        {path.preferred_label}
+                      </h4>
+                      <p className="mt-1 break-all text-xs text-zinc-500">
+                        {path.occupation_uri}
+                      </p>
+                      <p className="mt-3 text-sm leading-6 text-zinc-700">
+                        {path.explanation}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {path.matched_skill_labels.map((label) => (
+                          <span
+                            key={`${path.occupation_uri}-${label}`}
+                            className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-950"
+                          >
+                            {label}
+                          </span>
+                        ))}
                       </div>
-
-                      <div className="mt-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                          All skills listed for this job
-                        </p>
+                      <details className="mt-4 rounded-md border border-zinc-200 bg-zinc-50">
+                        <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-zinc-950">
+                          Show full occupation skill list
+                        </summary>
                         {path.required_skills?.length ? (
-                          <div className="mt-2 grid max-h-72 gap-2 overflow-auto rounded border border-stone-200 bg-white p-2 sm:grid-cols-2">
+                          <div className="grid max-h-72 gap-2 overflow-auto border-t border-zinc-200 p-2 sm:grid-cols-2">
                             {path.required_skills.map((skill) => (
                               <div
                                 key={skill.skill_uri}
                                 className={`rounded border px-3 py-2 text-sm ${
                                   skill.person_has
-                                    ? "border-teal-300 bg-teal-50 text-teal-950"
-                                    : "border-stone-200 bg-stone-50 text-stone-700"
+                                    ? "border-emerald-300 bg-emerald-50 text-emerald-950"
+                                    : "border-zinc-200 bg-white text-zinc-700"
                                 }`}
                               >
                                 <div className="flex items-start justify-between gap-2">
@@ -1108,8 +1376,8 @@ export function SearchClient() {
                                   <span
                                     className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
                                       skill.person_has
-                                        ? "bg-teal-800 text-white"
-                                        : "bg-stone-200 text-stone-700"
+                                        ? "bg-emerald-800 text-white"
+                                        : "bg-zinc-200 text-zinc-700"
                                     }`}
                                   >
                                     {skill.person_has ? "Has" : "Gap"}
@@ -1123,11 +1391,50 @@ export function SearchClient() {
                             ))}
                           </div>
                         ) : (
-                          <p className="mt-2 text-sm text-stone-500">
+                          <p className="border-t border-zinc-200 p-3 text-sm text-zinc-500">
                             Full skill list was not returned for this occupation.
                           </p>
                         )}
+                      </details>
+                    </div>
+                    <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-700">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        Fit score
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-cyan-800">
+                        {matchedSkillCount}/{path.required_skill_count ?? "-"}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        skills matched
+                      </p>
+                      <div className="mt-3 space-y-1 text-xs leading-5">
+                        <p>
+                          Matched skills: {matchedSkillCount} * 100 ={" "}
+                          {formatScoreValue(matchedSkillScore, 0)}
+                        </p>
+                        <p>
+                          Essential skills: {matchedEssentialSkillCount} * 25 ={" "}
+                          {formatScoreValue(matchedEssentialScore, 0)}
+                        </p>
+                        <p>
+                          Coverage: {formatCoverageValue(path.skill_coverage)} *
+                          10 = {formatScoreValue(coverageScore)}
+                        </p>
+                        <p>
+                          Matched similarity:{" "}
+                          {formatScoreValue(path.matched_similarity)}
+                        </p>
+                        <p>
+                          Relation penalty: -
+                          {formatScoreValue(path.relation_rank, 0)}
+                        </p>
                       </div>
+                      <p className="mt-3 border-t border-zinc-200 pt-2 text-sm font-semibold text-zinc-950">
+                        Final rank score: {formatScoreValue(path.rank_score)}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Coverage: {formatCoveragePercent(path.skill_coverage)}
+                      </p>
                     </div>
                   </li>
                 );
@@ -1136,71 +1443,52 @@ export function SearchClient() {
           )}
         </section>
 
-        <section className="rounded-md border border-stone-300 bg-white shadow-sm">
-          <div className="border-b border-stone-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-stone-950">
-              Human-readable portable profile
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">
-              This is the shareable summary. The JSON buttons above expose the
-              full machine-readable version with ESCO IDs and metadata.
-            </p>
-          </div>
-          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-center">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                Summary
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+                Export and actions
               </p>
-              <p className="mt-2 text-sm leading-6 text-stone-800">
-                {currentProfile.person_summary}
+              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
+                Save or restart this RouteMap
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-zinc-600">
+                The machine-readable JSON keeps the ESCO skill IDs, job IDs,
+                score components, and metadata for reuse by another system.
               </p>
-              <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                Evidence from experience
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {currentProfile.experience_evidence.map((item) => (
-                  <span
-                    key={item.id}
-                    className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-950"
-                  >
-                    {item.plain_language_label}
-                  </span>
-                ))}
-                {currentProfile.unmapped_evidence.map((item) => (
-                  <span
-                    key={item.id}
-                    className="rounded border border-stone-300 bg-stone-100 px-2 py-1 text-xs font-medium text-stone-700"
-                  >
-                    Needs mapping: {item.plain_language_label}
-                  </span>
-                ))}
-              </div>
             </div>
-            <div className="space-y-3 rounded border border-stone-200 bg-stone-50 p-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                  Education
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {currentProfile.education || "-"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                  Languages
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {currentProfile.languages.join(", ") || "-"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                  Engine
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {currentProfile.export_metadata.engine_version}
-                </p>
-              </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <Button
+                type="button"
+                className="h-9 rounded-md bg-zinc-950 px-3 text-white hover:bg-cyan-800"
+                onClick={() => void copyProfileJson()}
+              >
+                Copy JSON
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 rounded-md border-zinc-300 px-3"
+                onClick={downloadProfileJson}
+              >
+                Download JSON
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 rounded-md border-zinc-300 px-3"
+                onClick={viewProfileJson}
+              >
+                View JSON
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 rounded-md border-zinc-300 px-3"
+                onClick={resetSurvey}
+              >
+                New profile
+              </Button>
             </div>
           </div>
         </section>
@@ -1209,31 +1497,36 @@ export function SearchClient() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f8f5] text-stone-950">
+    <div className="min-h-screen bg-[#f7f8f5] text-zinc-950">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <section className="grid gap-4 border-b border-stone-300 pb-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">
-              UNMAPPED Skill Engine
+        <section className="grid gap-4 border-b border-zinc-300 pb-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+              SkillRoute
             </p>
-            <h1 className="max-w-4xl text-3xl font-semibold tracking-normal text-stone-950 sm:text-4xl">
-              Turn lived experience into a portable, explainable skills profile.
+            <h1 className="mt-2 max-w-4xl text-3xl font-semibold tracking-normal text-zinc-950 sm:text-4xl">
+              Skills intelligence for unmapped youth opportunity.
             </h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
+              SkillRoute turns lived experience into ESCO-grounded skill
+              profiles and transparent job routes that a young person,
+              navigator, or training provider can understand.
+            </p>
           </div>
-          <nav className="rounded-md border border-stone-300 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-stone-500">
-              Menu
+          <nav className="rounded-md border border-zinc-300 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
+              Workspace
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <Link
                 href="/"
-                className="rounded border border-teal-300 bg-teal-50 px-3 py-2 text-sm font-semibold text-teal-950"
+                className="rounded border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950"
               >
-                Build profile
+                SkillRoute
               </Link>
               <Link
                 href="/tools"
-                className="rounded border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 transition hover:border-teal-700 hover:text-teal-800"
+                className="rounded border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:border-cyan-700 hover:text-cyan-800"
               >
                 ESCO tools
               </Link>
@@ -1241,204 +1534,17 @@ export function SearchClient() {
           </nav>
         </section>
 
+        {viewPhase === "chat" ? renderProcessOverview("discover") : null}
+        {viewPhase === "results" && profile ? renderProcessOverview("review") : null}
         {viewPhase === "results" && profile ? renderResultsView(profile) : null}
-
-        {viewPhase !== "results" ? (
-        <section
-          className={
-            viewPhase === "loading"
-              ? "mx-auto grid w-full max-w-4xl gap-5"
-              : "mx-auto grid w-full max-w-3xl gap-5"
-          }
-        >
-          {viewPhase === "chat" ? (
-          <div className="rounded-md border border-stone-300 bg-white shadow-sm">
-            <div className="border-b border-stone-200 px-4 py-3">
-              <h2 className="text-base font-semibold text-stone-950">
-                Chat survey
-              </h2>
-              <p className="mt-1 text-sm leading-6 text-stone-600">
-                I collect the important fields for the skill discovery engine.
-                You can answer naturally; press Enter to send or Shift+Enter for
-                a new line.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {requiredFieldKeys.map((field) => {
-                  const value = requiredFieldValue(surveyData, field);
-
-                  return (
-                    <span
-                      key={field}
-                      className={`rounded border px-2 py-1 text-xs font-medium ${
-                        value
-                          ? "border-teal-300 bg-teal-50 text-teal-950"
-                          : "border-stone-300 bg-stone-100 text-stone-600"
-                      }`}
-                    >
-                      {requiredFieldLabels[field]}
-                      {value ? `: ${value.slice(0, 34)}${value.length > 34 ? "..." : ""}` : " needed"}
-                    </span>
-                  );
-                })}
-              </div>
-              <div
-                className={`mt-3 rounded-md border px-3 py-2 text-sm ${
-                  surveyMissing.length === 0
-                    ? "border-teal-300 bg-teal-50 text-teal-950"
-                    : "border-amber-300 bg-amber-50 text-amber-950"
-                }`}
-              >
-                {surveyMissing.length === 0
-                  ? "All important data is collected."
-                  : `Still needed: ${surveyMissing
-                      .slice(0, 5)
-                      .map((field) => requiredFieldLabels[field])
-                      .join(", ")}${
-                      surveyMissing.length > 5 ? "..." : ""
-                    }. You can also say: show me the result now.`}
-              </div>
-              {calculationStage !== "idle" ? (
-                <div className="mt-3 rounded-md border border-stone-200 bg-white px-3 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
-                    Calculation status
-                  </p>
-                  <div className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
-                    <span
-                      className={`rounded border px-2 py-1 ${
-                        ["collected", "extracting", "grounding", "done"].includes(
-                          calculationStage,
-                        )
-                          ? "border-teal-300 bg-teal-50 text-teal-950"
-                          : "border-stone-300 bg-stone-100 text-stone-600"
-                      }`}
-                    >
-                      Data collected
-                    </span>
-                    <span
-                      className={`rounded border px-2 py-1 ${
-                        ["extracting", "grounding", "done"].includes(
-                          calculationStage,
-                        )
-                          ? "border-teal-300 bg-teal-50 text-teal-950"
-                          : "border-stone-300 bg-stone-100 text-stone-600"
-                      }`}
-                    >
-                      LLM extracts skills
-                    </span>
-                    <span
-                      className={`rounded border px-2 py-1 ${
-                        ["grounding", "done"].includes(calculationStage)
-                          ? "border-teal-300 bg-teal-50 text-teal-950"
-                          : "border-stone-300 bg-stone-100 text-stone-600"
-                      }`}
-                    >
-                      RAG finds ESCO top 3
-                    </span>
-                  </div>
-                  {isGeneratingProfile ? (
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-200">
-                      <div className="h-full w-2/3 animate-pulse rounded-full bg-teal-700" />
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="max-h-[32rem] space-y-3 overflow-y-auto px-4 py-4">
-              {profileMessages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
-                  className={
-                    message.role === "user"
-                      ? "ml-auto max-w-[88%] rounded-md bg-teal-800 px-3 py-2 text-sm leading-6 text-white"
-                      : "max-w-[88%] rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-800"
-                  }
-                >
-                  {message.content}
-                </div>
-              ))}
-            </div>
-
-            <form
-              onSubmit={addInterviewMessage}
-              className="grid gap-3 border-t border-stone-200 p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
-            >
-              <textarea
-                value={profileInput}
-                onChange={(event) => setProfileInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                placeholder="Example: I am 27, in Hamburg Germany, German C1, EU work permit, bachelor, 3 years experience, favorite skill data analysis..."
-                className="min-h-24 resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-base leading-6 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-700/15"
-                disabled={isAnalyzingIntake || isGeneratingProfile}
-              />
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="submit"
-                  className="h-11 rounded-md bg-stone-950 px-5 text-white hover:bg-teal-800"
-                  disabled={isAnalyzingIntake || isGeneratingProfile}
-                >
-                  {isAnalyzingIntake ? "Reading" : "Add"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-11 rounded-md border-stone-300 px-5"
-                  onClick={loadAmaraDemo}
-                >
-                  Amara demo
-                </Button>
-              </div>
-            </form>
-
-            <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 px-3 py-3">
-              <Button
-                type="button"
-                className="h-11 rounded-md bg-teal-800 px-5 text-white hover:bg-stone-950"
-                disabled={
-                  isAnalyzingIntake ||
-                  isGeneratingProfile ||
-                  surveyMissing.length > 0
-                }
-                onClick={() => void generateProfile()}
-              >
-                {isAnalyzingIntake
-                  ? "Reading message"
-                  : isGeneratingProfile
-                  ? "Generating analysis"
-                  : surveyMissing.length > 0
-                    ? "Waiting for important info"
-                    : "Generate analysis"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 rounded-md border-stone-300 px-5"
-                onClick={resetSurvey}
-              >
-                Reset
-              </Button>
-              {profileStatus ? (
-                <p className="text-sm text-stone-600">{profileStatus}</p>
-              ) : null}
-            </div>
-          </div>
-          ) : null}
-
-          {viewPhase === "loading" ? renderLoadingScreen() : null}
-        </section>
-        ) : null}
+        {viewPhase === "loading" ? renderLoadingScreen() : null}
+        {viewPhase === "chat" ? renderMiloChat() : null}
 
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-900">
             {error}
           </div>
         ) : null}
-
       </main>
     </div>
   );
