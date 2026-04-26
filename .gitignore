@@ -9,3 +9,11 @@ data/
 *.tsv
 *.sqlite
 *.db
+
+# Runtime ISCO extracts used by the web app opportunity analysis.
+!ESCO dataset - v1.2.1 - classification - en - csv/
+ESCO dataset - v1.2.1 - classification - en - csv/*
+!ESCO dataset - v1.2.1 - classification - en - csv/ISCO/
+ESCO dataset - v1.2.1 - classification - en - csv/ISCO/*
+!ESCO dataset - v1.2.1 - classification - en - csv/ISCO/EMP_TEMP_SEX_AGE_OCU_NB_A-filtered-2026-04-26.csv
+!ESCO dataset - v1.2.1 - classification - en - csv/ISCO/EMP_TEMP_SEX_OCU_EDU_NB_A-filtered-2026-04-26.csv
