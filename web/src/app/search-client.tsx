@@ -3780,26 +3780,6 @@ export function SearchClient({
             experience is often real but hard to compare across training,
             hiring, and support systems.
           </p>
-          <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
-            <div className="rounded border border-cyan-300 bg-white/70 px-3 py-2">
-              <span className="font-semibold text-zinc-950">
-                {identifiedSkills.length}
-              </span>{" "}
-              best fitting ESCO skills
-            </div>
-            <div className="rounded border border-cyan-300 bg-white/70 px-3 py-2">
-              <span className="font-semibold text-zinc-950">
-                {acceptedSkills.length}
-              </span>{" "}
-              accepted skills
-            </div>
-            <div className="rounded border border-cyan-300 bg-white/70 px-3 py-2">
-              <span className="font-semibold text-zinc-950">
-                {declinedSkillCount}
-              </span>{" "}
-              declined skills
-            </div>
-          </div>
         </div>
 
         <details className="rounded-md border border-zinc-300 bg-white shadow-sm">
@@ -4100,47 +4080,11 @@ export function SearchClient({
               })}
             </ol>
           )}
-        </section>
-
-        <section className="rounded-md border border-cyan-200 bg-cyan-50 shadow-sm">
-          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-800">
-                Next view
-              </p>
-              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
-                Your skill opportunities
-              </h3>
-              <p className="mt-1 text-sm leading-6 text-cyan-950">
-                Continue to the dedicated opportunity view to see local routes
-                and ESCO job matches based on the accepted skills.
-              </p>
-            </div>
-            <Button
-              type="button"
-              className="h-10 rounded-md bg-zinc-950 px-4 text-white hover:bg-cyan-800"
-              onClick={() => setViewPhase("opportunities")}
-            >
-              <BriefcaseBusiness />
-              View opportunities
-            </Button>
-          </div>
-        </section>
-
-        <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
-          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-center">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-                Export and actions
-              </p>
-              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
-                Save or restart this Skill Profile
-              </h3>
-              <p className="mt-1 text-sm leading-6 text-zinc-600">
-                The machine-readable JSON keeps the ESCO skill IDs, job IDs,
-                score components, and metadata for reuse by another system.
-              </p>
-            </div>
+          <div className="grid gap-3 border-t border-zinc-200 bg-zinc-50 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <p className="text-sm leading-6 text-zinc-600">
+              Save the machine-readable profile or start over with a new
+              person.
+            </p>
             <div className="flex flex-wrap gap-2 lg:justify-end">
               <Button
                 type="button"
@@ -4176,6 +4120,32 @@ export function SearchClient({
             </div>
           </div>
         </section>
+
+        <section className="rounded-md border border-cyan-200 bg-cyan-50 shadow-sm">
+          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-800">
+                Next view
+              </p>
+              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
+                Your skill opportunities
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-cyan-950">
+                Continue to the dedicated opportunity view to see local routes
+                and ESCO job matches based on the accepted skills.
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="h-10 rounded-md bg-zinc-950 px-4 text-white hover:bg-cyan-800"
+              onClick={() => setViewPhase("opportunities")}
+            >
+              <BriefcaseBusiness />
+              View opportunities
+            </Button>
+          </div>
+        </section>
+
       </section>
     );
   }
@@ -4189,29 +4159,24 @@ export function SearchClient({
 
     return (
       <section className="grid gap-5">
-        <div className="rounded-md border border-zinc-300 bg-white shadow-sm">
-          <div className="grid gap-4 px-4 py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="rounded-md border border-cyan-200 bg-cyan-50 shadow-sm">
+          <div className="px-4 py-5">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-                Your skill opportunities
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-800">
+                How this view works
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-normal text-zinc-950">
-                Opportunity paths from accepted skills
+                Turning the accepted skill profile into opportunity routes
               </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-                This view uses the accepted ESCO skills from the Skill Profile
-                to explain local opportunity routes and fitting ESCO jobs.
+              <p className="mt-2 max-w-4xl text-sm leading-6 text-cyan-950">
+                This view takes only the ESCO skills the user accepted, compares
+                them with the active local opportunity protocol, and shows why
+                each route may fit. The first section blends local labor-market
+                signals, training pathways, and stakeholder weights; the second
+                section shows the ESCO jobs whose required skills overlap with
+                the accepted profile.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 rounded-md border-zinc-300 px-4"
-              onClick={() => setViewPhase("results")}
-            >
-              <Layers3 />
-              Back to Skill Profile
-            </Button>
           </div>
         </div>
 
