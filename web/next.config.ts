@@ -1,8 +1,6 @@
 import type { NextConfig } from "next";
-import path from "node:path";
 
 const nextConfig: NextConfig = {
-  outputFileTracingRoot: path.join(__dirname, ".."),
   outputFileTracingIncludes: {
     "/api/isco-trend": [
       "../ESCO dataset - v1.2.1 - classification - en - csv/ISCO/EMP_TEMP_SEX_AGE_OCU_NB_A-filtered-2026-04-26.csv",
