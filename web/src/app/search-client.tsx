@@ -2197,17 +2197,13 @@ export function SearchClient({
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="overflow-hidden rounded-md border border-zinc-300 bg-white shadow-sm">
           <div className="border-b border-zinc-200 bg-zinc-950 px-4 py-4 text-white">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              Skill Discovery Engine
-            </p>
             <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-semibold tracking-normal">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h2 className="text-3xl font-semibold tracking-normal">
                   Milo
                 </h2>
-                <p className="mt-1 text-sm leading-6 text-zinc-300">
-                  An AI skills navigator that turns informal experience into
-                  portable ESCO signals.
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                  Skill Discovery Engine
                 </p>
               </div>
               <span className="rounded border border-cyan-300/40 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-100">
@@ -3278,18 +3274,24 @@ export function SearchClient({
         <section className="border-b border-zinc-300 pb-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-              {workspacePanel === "admin" ? "Admin Setup" : "Profile Builder"}
+              {workspacePanel === "admin" ? "Admin Setup" : "SkillRoute"}
             </p>
             <h1 className="mt-2 max-w-4xl text-3xl font-semibold tracking-normal text-zinc-950 sm:text-4xl">
-              {workspacePanel === "admin"
-                ? "Configure the opportunity protocol."
-                : "Skills intelligence for unmapped youth opportunity."}
+              {workspacePanel === "admin" ? (
+                "Configure the opportunity protocol."
+              ) : (
+                <>
+                  Turn skills into{" "}
+                  <span className="font-serif italic">opportunities</span>.
+                </>
+              )}
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
-              {workspacePanel === "admin"
-                ? "Tune local labor-market sources, signal weights, and pathway rules that shape SkillRoute recommendations."
-                : "SkillRoute turns lived experience into ESCO-grounded skill profiles and transparent job routes that a young person, navigator, or training provider can understand."}
-            </p>
+            {workspacePanel === "admin" ? (
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
+                Tune local labor-market sources, signal weights, and pathway
+                rules that shape SkillRoute recommendations.
+              </p>
+            ) : null}
           </div>
         </section>
 

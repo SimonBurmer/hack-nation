@@ -16,22 +16,18 @@ export function ProcessOverview({
   const steps: Array<{
     id: JourneyStep;
     title: string;
-    description: string;
   }> = [
     {
       id: "discovery",
       title: "Skill discovery engine",
-      description: "Share age, location, lived experience, tools, and skills.",
     },
     {
       id: "profile",
       title: "Your skill profile",
-      description: "Review ESCO skill matches and accept or decline each one.",
     },
     {
       id: "opportunities",
       title: "Your opportunities",
-      description: "See local routes and ESCO jobs from accepted skills.",
     },
   ];
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
@@ -42,9 +38,6 @@ export function ProcessOverview({
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
           User journey
         </p>
-        <h2 className="mt-1 text-lg font-semibold text-zinc-950">
-          Three views from discovery to opportunity
-        </h2>
       </div>
       <ol className="grid gap-0 md:grid-cols-3">
         {steps.map((step, index) => {
@@ -78,9 +71,6 @@ export function ProcessOverview({
                 <span>
                   <span className="block font-semibold text-zinc-950">
                     {step.title}
-                  </span>
-                  <span className="mt-1 block text-sm leading-6 text-zinc-600">
-                    {step.description}
                   </span>
                 </span>
               </button>
