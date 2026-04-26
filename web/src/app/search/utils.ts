@@ -13,15 +13,13 @@ import type {
 
 export const requiredFieldLabels: Record<RequiredSurveyField, string> = {
   age: "Age",
-  location: "Location",
+  location: "Country",
   languages: "Languages",
   work_authorization: "Work authorization",
   educational_level: "Education",
   favorite_skill: "Favorite skill",
   years_experience_total: "Experience",
   skill_confidence: "Skill confidence",
-  informal_experience: "Informal experience",
-  demonstrated_competencies: "Demonstrated competencies",
 };
 
 export const requiredFieldKeys: RequiredSurveyField[] = [
@@ -33,8 +31,6 @@ export const requiredFieldKeys: RequiredSurveyField[] = [
   "favorite_skill",
   "years_experience_total",
   "skill_confidence",
-  "informal_experience",
-  "demonstrated_competencies",
 ];
 
 export function missingSurveyFields(data: SurveyData): RequiredSurveyField[] {
@@ -47,10 +43,6 @@ export function missingSurveyFields(data: SurveyData): RequiredSurveyField[] {
     !data.favorite_skill ? "favorite_skill" : "",
     !data.years_experience_total ? "years_experience_total" : "",
     !data.skill_confidence ? "skill_confidence" : "",
-    !data.informal_experience ? "informal_experience" : "",
-    (data.demonstrated_competencies?.length ?? 0) === 0
-      ? "demonstrated_competencies"
-      : "",
   ].filter(Boolean) as RequiredSurveyField[];
 }
 
@@ -82,7 +74,7 @@ export function messagesForProfile(messages: ChatMessage[], data: SurveyData) {
       role: "user" as const,
       content: [
         `Age: ${data.age ?? "unknown"}.`,
-        `Location: ${data.location || "unknown"}.`,
+        `Country: ${data.location || "unknown"}.`,
         `Languages: ${(data.languages ?? []).join(", ") || "unknown"}.`,
         `Work authorization: ${data.work_authorization || "unknown"}.`,
         `Availability: ${data.availability || "unknown"}.`,
@@ -151,10 +143,6 @@ export function requiredFieldValue(
       return data.years_experience_total;
     case "skill_confidence":
       return data.skill_confidence;
-    case "informal_experience":
-      return data.informal_experience;
-    case "demonstrated_competencies":
-      return listText(data.demonstrated_competencies ?? []);
   }
 }
 

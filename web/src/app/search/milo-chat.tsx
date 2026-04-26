@@ -18,6 +18,7 @@ type MiloChatProps = {
   profileStatus: string;
   surveyData: SurveyData;
   surveyMissing: RequiredSurveyField[];
+  onContinueFromHere: () => void;
   onGenerateProfile: () => void;
   onInputChange: (value: string) => void;
   onLoadDemo: () => void;
@@ -33,6 +34,7 @@ export function MiloChat({
   profileStatus,
   surveyData,
   surveyMissing,
+  onContinueFromHere,
   onGenerateProfile,
   onInputChange,
   onLoadDemo,
@@ -97,7 +99,7 @@ export function MiloChat({
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="Tell Milo: age, location, education, languages, informal work, tools, and skills..."
+            placeholder="Tell Milo: country, education, languages, work permission, experience, tools, and skills..."
             className="min-h-28 resize-y rounded-md border border-zinc-300 bg-white px-3 py-2 text-base leading-6 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/15"
             disabled={isAnalyzingIntake || isGeneratingProfile}
           />
@@ -124,6 +126,15 @@ export function MiloChat({
           <Button
             type="button"
             className="h-11 rounded-md bg-cyan-800 px-5 text-white hover:bg-zinc-950"
+            disabled={isAnalyzingIntake || isGeneratingProfile}
+            onClick={onContinueFromHere}
+          >
+            Continue from here
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-md border-zinc-300 px-5"
             disabled={
               isAnalyzingIntake ||
               isGeneratingProfile ||

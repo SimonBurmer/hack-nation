@@ -397,7 +397,7 @@ export const emptySurveyData: SurveyData = {
 };
 
 export const firstSurveyPrompt =
-  "Hi, I am Milo. I can build your SkillRoute profile. Tell me your age, location, languages, education, work authorization, experience, and the skills you want mapped. Share anything useful; I will ask only for what is missing.";
+  "Hi, I am Milo. We can do this like a quick conversation. Tell me a little about yourself: what you are good at, what you enjoy doing, and the country you live in. I will pick up the details as we go.";
 
 export const amaraDemoMessages: ChatMessage[] = [
   {
