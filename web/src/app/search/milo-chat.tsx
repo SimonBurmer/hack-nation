@@ -50,24 +50,25 @@ export function MiloChat({
   }));
 
   return (
-    <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="overflow-hidden rounded-md border border-zinc-300 bg-white shadow-sm">
-        <div className="border-b border-zinc-200 bg-[#f0e4d8] px-4 py-4">
-          <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h2 className="text-3xl font-semibold tracking-normal text-zinc-950">
-                Milo
-              </h2>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-                Conversational Skill Discovery Engine
-              </p>
-            </div>
-            <span className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-950">
-              Agent online
-            </span>
+    <section className="overflow-hidden rounded-md border border-zinc-300 bg-white shadow-sm">
+      <div className="border-b border-zinc-200 bg-[#f0e4d8] px-4 py-4">
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="text-3xl font-semibold tracking-normal text-zinc-950">
+              Milo
+            </h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+              Conversational Skill Discovery Engine
+            </p>
           </div>
+          <span className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-950">
+            Agent online
+          </span>
         </div>
+      </div>
 
+      <div className="grid items-start gap-4 bg-[#f7efe6] p-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="overflow-hidden rounded-md border border-zinc-200 bg-white shadow-sm">
         <div className="max-h-[32rem] space-y-3 overflow-y-auto bg-[#f7efe6] px-4 py-4">
           {profileMessages.map((message, index) => (
             <div
@@ -166,12 +167,12 @@ export function MiloChat({
         </div>
       </div>
 
-      <aside className="grid gap-4">
-        <div className="rounded-md border border-zinc-300 bg-white p-4 shadow-sm">
+      <aside className="min-w-0">
+        <div className="rounded-md border border-zinc-300 bg-white p-3 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
             Intake signal
           </p>
-          <div className="mt-3 rounded border border-zinc-200 bg-zinc-50 px-3 py-3">
+          <div className="mt-2 rounded border border-zinc-200 bg-zinc-50 px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm font-semibold text-zinc-950">
                 Required intake
@@ -186,7 +187,7 @@ export function MiloChat({
                 {completedRequiredCount}/{requiredFieldKeys.length}
               </span>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-200">
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-200">
               <div
                 className="h-full rounded-full bg-cyan-700 transition-all"
                 style={{
@@ -196,7 +197,7 @@ export function MiloChat({
                 }}
               />
             </div>
-            <p className="mt-2 text-xs leading-5 text-zinc-600">
+            <p className="mt-1.5 text-xs leading-5 text-zinc-600">
               {surveyMissing.length === 0
                 ? "Ready to generate a Skill Profile."
                 : `Still needed: ${surveyMissing
@@ -206,20 +207,27 @@ export function MiloChat({
             </p>
           </div>
 
-          <div className="mt-3 grid gap-2 text-sm">
+          <div className="mt-2 grid gap-1">
             {intakeSignalFields.map(({ field, label, value }) => (
               <div
                 key={field}
-                className={`rounded border px-3 py-2 ${
+                className={`rounded border px-2.5 py-1 ${
                   value
-                    ? "border-emerald-200 bg-emerald-50"
+                    ? "border-emerald-200 bg-emerald-50/70"
                     : "border-zinc-200 bg-white"
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-zinc-600">{label}</span>
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="shrink-0 text-xs font-semibold text-zinc-600">
+                    {label}
+                  </span>
+                  {value && field !== "skill_confidence" ? (
+                    <span className="min-w-0 flex-1 truncate text-right text-[11px] leading-4 text-zinc-700">
+                      {value}
+                    </span>
+                  ) : null}
                   <span
-                    className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
                       value
                         ? "bg-emerald-800 text-white"
                         : "bg-zinc-200 text-zinc-700"
@@ -228,31 +236,27 @@ export function MiloChat({
                     {value ? "Captured" : "Needed"}
                   </span>
                 </div>
-                {value ? (
-                  <p className="mt-1 truncate text-xs text-zinc-700">
-                    {value}
-                  </p>
-                ) : null}
               </div>
             ))}
           </div>
 
-          <div className="mt-3 grid grid-cols-2 gap-2 text-center text-xs">
-            <div className="rounded border border-zinc-200 bg-zinc-50 px-2 py-2">
-              <p className="text-lg font-semibold text-zinc-950">
+          <div className="mt-2 grid grid-cols-2 gap-1.5 text-center text-xs">
+            <div className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5">
+              <p className="text-base font-semibold leading-5 text-zinc-950">
                 {surveyData.skills.length}
               </p>
-              <p className="font-medium text-zinc-500">Skills</p>
+              <p className="text-[11px] font-medium text-zinc-500">Skills</p>
             </div>
-            <div className="rounded border border-zinc-200 bg-zinc-50 px-2 py-2">
-              <p className="text-lg font-semibold text-zinc-950">
+            <div className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5">
+              <p className="text-base font-semibold leading-5 text-zinc-950">
                 {surveyData.demonstrated_competencies.length}
               </p>
-              <p className="font-medium text-zinc-500">Evidence</p>
+              <p className="text-[11px] font-medium text-zinc-500">Evidence</p>
             </div>
           </div>
         </div>
       </aside>
+      </div>
     </section>
   );
 }
