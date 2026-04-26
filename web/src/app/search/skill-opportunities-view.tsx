@@ -6,12 +6,14 @@ import { ExternalLink } from "lucide-react";
 import { OpportunityDashboard } from "./opportunity-dashboard";
 import { identifiedSkillsForProfile } from "./profile-view-utils";
 import type {
+  OpportunityFinalConsiderations,
   OpportunityProtocolConfig,
   SkillDecision,
   SkillProfile,
   SurveyData,
 } from "./types";
 import {
+  buildLocalOpportunityMatches,
   formatCoveragePercent,
   formatCoverageValue,
   formatScoreValue,
@@ -59,6 +61,8 @@ type IscoTrendLookup = {
   suggestions?: string[];
 };
 
+type FinalConsiderationsStatus = "idle" | "loading" | "ready" | "error";
+
 function externalHref(value: string) {
   return value.startsWith("http://") || value.startsWith("https://")
     ? value
@@ -94,19 +98,40 @@ function formatTrendDelta(value: number | undefined) {
   })}`;
 }
 
+function formatRealismLevel(level: string) {
+  return level.replace(/_/g, " ");
+}
+
 export function SkillOpportunitiesView({
   currentProfile,
   selectedOpportunityConfig,
   skillDecisions,
   surveyData,
 }: SkillOpportunitiesViewProps) {
-  const identifiedSkills = identifiedSkillsForProfile(currentProfile);
-  const acceptedSkills = identifiedSkills.filter(
-    (skill) => skillDecisions[skill.concept_uri] !== "declined",
+  const identifiedSkills = useMemo(
+    () => identifiedSkillsForProfile(currentProfile),
+    [currentProfile],
+  );
+  const acceptedSkills = useMemo(
+    () =>
+      identifiedSkills.filter(
+        (skill) => skillDecisions[skill.concept_uri] !== "declined",
+      ),
+    [identifiedSkills, skillDecisions],
   );
   const topJobs = currentProfile.occupation_paths;
   const trendSex = "Male";
   const trendLocation = surveyData.location.trim();
+  const localMatches = useMemo(
+    () =>
+      buildLocalOpportunityMatches(
+        selectedOpportunityConfig,
+        surveyData,
+        acceptedSkills,
+        topJobs,
+      ).slice(0, 4),
+    [acceptedSkills, selectedOpportunityConfig, surveyData, topJobs],
+  );
   const topTrendJobs = useMemo(
     () =>
       topJobs
@@ -124,21 +149,34 @@ export function SkillOpportunitiesView({
     [topJobs],
   );
   const [trendLookups, setTrendLookups] = useState<IscoTrendLookup[]>([]);
+  const [finalConsiderationsStatus, setFinalConsiderationsStatus] =
+    useState<FinalConsiderationsStatus>("idle");
+  const [finalConsiderations, setFinalConsiderations] =
+    useState<OpportunityFinalConsiderations | null>(null);
+  const [finalConsiderationsError, setFinalConsiderationsError] = useState("");
 
   useEffect(() => {
+    let isCurrent = true;
+
     if (!trendLocation || topTrendJobs.length === 0) {
-      setTrendLookups([]);
-      return;
+      queueMicrotask(() => {
+        if (isCurrent) setTrendLookups([]);
+      });
+      return () => {
+        isCurrent = false;
+      };
     }
 
-    let isCurrent = true;
-    setTrendLookups(
-      topTrendJobs.map(({ path, majorCode }) => ({
-        path,
-        majorCode,
-        status: "loading",
-      })),
-    );
+    queueMicrotask(() => {
+      if (!isCurrent) return;
+      setTrendLookups(
+        topTrendJobs.map(({ path, majorCode }) => ({
+          path,
+          majorCode,
+          status: "loading",
+        })),
+      );
+    });
 
     void Promise.all(
       topTrendJobs.map(async ({ path, majorCode }) => {
@@ -188,6 +226,97 @@ export function SkillOpportunitiesView({
       isCurrent = false;
     };
   }, [topTrendJobs, trendLocation]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    const resetFinalConsiderations = () => {
+      queueMicrotask(() => {
+        if (!isCurrent) return;
+        setFinalConsiderationsStatus("idle");
+        setFinalConsiderations(null);
+        setFinalConsiderationsError("");
+      });
+    };
+
+    if (localMatches.length === 0) {
+      resetFinalConsiderations();
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    const trendLookupExpected = Boolean(trendLocation && topTrendJobs.length > 0);
+    const trendStillLoading =
+      (trendLookupExpected && trendLookups.length !== topTrendJobs.length) ||
+      trendLookups.some((lookup) => lookup.status === "loading");
+
+    if (trendStillLoading) {
+      resetFinalConsiderations();
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    queueMicrotask(() => {
+      if (!isCurrent) return;
+      setFinalConsiderationsStatus("loading");
+      setFinalConsiderations(null);
+      setFinalConsiderationsError("");
+    });
+
+    void fetch("/api/opportunity-final-considerations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        surveyData,
+        currentProfile,
+        selectedOpportunityConfig,
+        localOpportunities: localMatches,
+        trendLookups,
+      }),
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as
+          | OpportunityFinalConsiderations
+          | { error?: string };
+
+        if (!response.ok || "error" in payload) {
+          throw new Error(
+            "error" in payload && payload.error
+              ? payload.error
+              : "Final considerations failed.",
+          );
+        }
+
+        return payload as OpportunityFinalConsiderations;
+      })
+      .then((payload) => {
+        if (!isCurrent) return;
+        setFinalConsiderations(payload);
+        setFinalConsiderationsStatus("ready");
+      })
+      .catch((error) => {
+        if (!isCurrent) return;
+        setFinalConsiderationsError(
+          error instanceof Error
+            ? error.message
+            : "Final considerations failed.",
+        );
+        setFinalConsiderationsStatus("error");
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [
+    currentProfile,
+    localMatches,
+    selectedOpportunityConfig,
+    surveyData,
+    topTrendJobs.length,
+    trendLocation,
+    trendLookups,
+  ]);
 
   return (
     <section className="grid gap-5">
@@ -509,11 +638,137 @@ export function SkillOpportunitiesView({
               </div>
             )}
           </details>
+
+          <details className="rounded-md border border-zinc-300 bg-white shadow-sm">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-950">
+              Step 3: final considerations
+            </summary>
+            <div className="grid gap-3 border-t border-zinc-200 px-4 py-4">
+              <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm leading-6 text-cyan-950">
+                The Conversational Skill Discovery Engine sends the accepted
+                user profile, Step 1 local matches, and Step 2 ISCO trend data
+                to an LLM for a realism check. The reviewer is prompted to
+                consider LMIC constraints such as connectivity, transport,
+                informal hiring, training access, startup costs, credentials,
+                and thin local data.
+              </div>
+
+              {finalConsiderationsStatus === "loading" ? (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-4 text-sm text-zinc-500">
+                  Asking the LLM to review opportunity realism.
+                </div>
+              ) : finalConsiderationsStatus === "error" ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+                  {finalConsiderationsError}
+                </div>
+              ) : finalConsiderations ? (
+                <div className="grid gap-3">
+                  <article className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Overall realism check
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-zinc-700">
+                      {finalConsiderations.overallAssessment}
+                    </p>
+                  </article>
+
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <article className="rounded-md border border-zinc-200 bg-white px-3 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        LMIC cautions
+                      </p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-zinc-700">
+                        {finalConsiderations.lmicsCautions.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </article>
+                    <article className="rounded-md border border-zinc-200 bg-white px-3 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        Data gaps to verify
+                      </p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-zinc-700">
+                        {finalConsiderations.dataGaps.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  </div>
+
+                  <div className="grid gap-3">
+                    {finalConsiderations.reviews.map((review) => (
+                      <article
+                        key={review.opportunityId}
+                        className="rounded-md border border-zinc-200 bg-white px-3 py-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                              Opportunity realism
+                            </p>
+                            <h4 className="mt-1 font-semibold text-zinc-950">
+                              {review.title}
+                            </h4>
+                          </div>
+                          <span className="rounded border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-semibold capitalize text-cyan-900">
+                            {formatRealismLevel(review.realismLevel)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-zinc-700">
+                          {review.summary}
+                        </p>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-900">
+                              Supporting signals
+                            </p>
+                            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm leading-6 text-emerald-950">
+                              {review.supportingSignals.map((item) => (
+                                <li key={item}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-900">
+                              Risks and location challenges
+                            </p>
+                            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm leading-6 text-amber-950">
+                              {[...review.risks, ...review.locationChallenges].map(
+                                (item) => (
+                                  <li key={item}>{item}</li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded border border-zinc-200 bg-zinc-50 px-3 py-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                            Next checks
+                          </p>
+                          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm leading-6 text-zinc-700">
+                            {review.nextChecks.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-4 text-sm text-zinc-500">
+                  Final considerations will run after the opportunity matches
+                  and trend analysis are ready.
+                </div>
+              )}
+            </div>
+          </details>
         </section>
       </details>
 
       <OpportunityDashboard
         identifiedSkills={acceptedSkills}
+        localMatches={localMatches}
         selectedOpportunityConfig={selectedOpportunityConfig}
         surveyData={surveyData}
         topJobs={topJobs}

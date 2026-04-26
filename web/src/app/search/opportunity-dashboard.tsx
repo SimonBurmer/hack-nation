@@ -2,6 +2,7 @@
 
 import type {
   IdentifiedSkill,
+  LocalOpportunityMatch,
   OccupationPath,
   OpportunityProtocolConfig,
   SurveyData,
@@ -10,6 +11,7 @@ import { buildLocalOpportunityMatches } from "./utils";
 
 type OpportunityDashboardProps = {
   identifiedSkills: IdentifiedSkill[];
+  localMatches?: LocalOpportunityMatch[];
   selectedOpportunityConfig: OpportunityProtocolConfig;
   surveyData: SurveyData;
   topJobs: OccupationPath[];
@@ -17,16 +19,19 @@ type OpportunityDashboardProps = {
 
 export function OpportunityDashboard({
   identifiedSkills,
+  localMatches: providedLocalMatches,
   selectedOpportunityConfig,
   surveyData,
   topJobs,
 }: OpportunityDashboardProps) {
-  const localMatches = buildLocalOpportunityMatches(
-    selectedOpportunityConfig,
-    surveyData,
-    identifiedSkills,
-    topJobs,
-  ).slice(0, 4);
+  const localMatches =
+    providedLocalMatches ??
+    buildLocalOpportunityMatches(
+      selectedOpportunityConfig,
+      surveyData,
+      identifiedSkills,
+      topJobs,
+    ).slice(0, 4);
 
   return (
     <section className="rounded-md border border-zinc-300 bg-white shadow-sm">

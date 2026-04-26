@@ -213,6 +213,24 @@ export type LocalOpportunityMatch = LocalOpportunity & {
   scoreParts: Record<SignalWeightKey, number>;
 };
 
+export type OpportunityRealismReview = {
+  opportunityId: string;
+  title: string;
+  realismLevel: "high" | "medium" | "low" | "needs_more_data";
+  summary: string;
+  supportingSignals: string[];
+  risks: string[];
+  locationChallenges: string[];
+  nextChecks: string[];
+};
+
+export type OpportunityFinalConsiderations = {
+  overallAssessment: string;
+  lmicsCautions: string[];
+  dataGaps: string[];
+  reviews: OpportunityRealismReview[];
+};
+
 export type CachedProfile = {
   profile: SkillProfile;
   cached_at: string;
