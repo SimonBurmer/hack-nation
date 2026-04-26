@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  BarChart3,
   BriefcaseBusiness,
   Database,
   Settings2,
@@ -90,11 +89,6 @@ export function AppHeader() {
               );
             })}
           </nav>
-
-          <div className="hidden items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-950 lg:flex">
-            <BarChart3 className="size-4" aria-hidden="true" />
-            ESCO grounded
-          </div>
         </div>
       </div>
     </header>

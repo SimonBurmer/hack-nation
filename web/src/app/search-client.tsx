@@ -73,7 +73,7 @@ type IntakeAnalysis = SurveyData & {
 };
 
 type CalculationStage = "idle" | "collected" | "extracting" | "grounding" | "done";
-type ViewPhase = "chat" | "loading" | "results";
+type ViewPhase = "chat" | "loading" | "results" | "opportunities";
 type JourneyStep = "discover" | "ground" | "review";
 
 type EvidenceItem = {
@@ -680,6 +680,13 @@ const amaraSurveyData: SurveyData = {
   ],
 };
 
+const AMARA_DEMO_CACHE_KEY = "skillroute:amara-demo-skill-profile:v1";
+
+type CachedProfile = {
+  profile: SkillProfile;
+  cached_at: string;
+};
+
 const requiredFieldLabels: Record<RequiredSurveyField, string> = {
   age: "Age",
   location: "Location",
@@ -861,6 +868,33 @@ function clampFivePointScale(value: number) {
   if (!Number.isFinite(value)) return 1;
 
   return Math.min(Math.max(Math.round(value), 1), 5);
+}
+
+function readCachedProfile(cacheKey: string) {
+  try {
+    const cachedValue = window.localStorage.getItem(cacheKey);
+    if (!cachedValue) return null;
+
+    const cachedProfile = JSON.parse(cachedValue) as CachedProfile;
+    if (!cachedProfile.profile?.export_metadata) return null;
+
+    return cachedProfile;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProfile(cacheKey: string, profile: SkillProfile) {
+  try {
+    const cachedProfile: CachedProfile = {
+      profile,
+      cached_at: new Date().toISOString(),
+    };
+
+    window.localStorage.setItem(cacheKey, JSON.stringify(cachedProfile));
+  } catch {
+    // Cache failures should never block the user from seeing the profile.
+  }
 }
 
 function keywordMatchesProfile(keyword: string, profileText: string) {
@@ -1172,6 +1206,7 @@ export function SearchClient({
     messages = profileMessages,
     data = surveyData,
     allowIncomplete = false,
+    cacheKey?: string,
   ) {
     if (!allowIncomplete && missingSurveyFields(data).length > 0) {
       setProfileStatus(promptForMissingFields(data));
@@ -1241,11 +1276,19 @@ export function SearchClient({
         throw new Error(payload.error || "Profile generation failed.");
       }
 
+      if (cacheKey) {
+        writeCachedProfile(cacheKey, payload);
+      }
+
       setProfile(payload);
       setSkillDecisions({});
       setCalculationStage("done");
       setViewPhase("results");
-      setProfileStatus("Skill profile generated.");
+      setProfileStatus(
+        cacheKey
+          ? "Skill profile generated and cached for next time."
+          : "Skill profile generated.",
+      );
     } catch (profileError) {
       setProfile(null);
       setCalculationStage("idle");
@@ -1262,22 +1305,41 @@ export function SearchClient({
   }
 
   function loadAmaraDemo() {
+    const cachedProfile = readCachedProfile(AMARA_DEMO_CACHE_KEY);
+
     setProfile(null);
     setSkillDecisions({});
     setError("");
     setSelectedOpportunityConfigId("ghana-urban-informal");
     setIsAnalyzingIntake(false);
-    setCalculationStage("collected");
-    setViewPhase("loading");
     setSurveyData(amaraSurveyData);
     setProfileMessages([
       ...amaraDemoMessages,
       {
         role: "assistant",
-        content: "I have Amara's core signal. I am building her Skill Profile now.",
+        content: cachedProfile
+          ? "I have Amara's cached Skill Profile ready."
+          : "I have Amara's core signal. I am building her Skill Profile now.",
       },
     ]);
-    void generateProfile(amaraDemoMessages, amaraSurveyData);
+
+    if (cachedProfile) {
+      setProfile(cachedProfile.profile);
+      setCalculationStage("done");
+      setViewPhase("results");
+      setProfileStatus("Loaded cached Amara Skill Profile. No API call used.");
+      setIsGeneratingProfile(false);
+      return;
+    }
+
+    setCalculationStage("collected");
+    setViewPhase("loading");
+    void generateProfile(
+      amaraDemoMessages,
+      amaraSurveyData,
+      false,
+      AMARA_DEMO_CACHE_KEY,
+    );
   }
 
   async function copyProfileJson() {
@@ -3655,10 +3717,8 @@ export function SearchClient({
     );
   }
 
-  function renderResultsView(currentProfile: SkillProfile) {
-    const extractedSkills =
-      currentProfile.extracted_skills ?? currentProfile.experience_evidence;
-    const identifiedSkills =
+  function identifiedSkillsForProfile(currentProfile: SkillProfile) {
+    return (
       currentProfile.identified_skills ??
       currentProfile.grounding_trace.flatMap((trace) => {
         const bestCandidate = trace.top_skill_candidates[0];
@@ -3675,8 +3735,14 @@ export function SearchClient({
             confidence: skillConfidenceFromSimilarity(bestCandidate.similarity),
           },
         ];
-      });
-    const topJobs = currentProfile.occupation_paths;
+      })
+    );
+  }
+
+  function renderResultsView(currentProfile: SkillProfile) {
+    const extractedSkills =
+      currentProfile.extracted_skills ?? currentProfile.experience_evidence;
+    const identifiedSkills = identifiedSkillsForProfile(currentProfile);
     const acceptedSkills = identifiedSkills.filter(
       (skill) => skillDecisions[skill.concept_uri] !== "declined",
     );
@@ -4022,6 +4088,119 @@ export function SearchClient({
           )}
         </section>
 
+        <section className="rounded-md border border-cyan-200 bg-cyan-50 shadow-sm">
+          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-800">
+                Next view
+              </p>
+              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
+                Your skill opportunities
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-cyan-950">
+                Continue to the dedicated opportunity view to see local routes
+                and ESCO job matches based on the accepted skills.
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="h-10 rounded-md bg-zinc-950 px-4 text-white hover:bg-cyan-800"
+              onClick={() => setViewPhase("opportunities")}
+            >
+              <BriefcaseBusiness />
+              View opportunities
+            </Button>
+          </div>
+        </section>
+
+        <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+                Export and actions
+              </p>
+              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
+                Save or restart this Skill Profile
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-zinc-600">
+                The machine-readable JSON keeps the ESCO skill IDs, job IDs,
+                score components, and metadata for reuse by another system.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <Button
+                type="button"
+                className="h-9 rounded-md bg-zinc-950 px-3 text-white hover:bg-cyan-800"
+                onClick={() => void copyProfileJson()}
+              >
+                Copy JSON
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 rounded-md border-zinc-300 px-3"
+                onClick={downloadProfileJson}
+              >
+                Download JSON
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 rounded-md border-zinc-300 px-3"
+                onClick={viewProfileJson}
+              >
+                View JSON
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 rounded-md border-zinc-300 px-3"
+                onClick={resetSurvey}
+              >
+                New profile
+              </Button>
+            </div>
+          </div>
+        </section>
+      </section>
+    );
+  }
+
+  function renderSkillOpportunitiesView(currentProfile: SkillProfile) {
+    const identifiedSkills = identifiedSkillsForProfile(currentProfile);
+    const acceptedSkills = identifiedSkills.filter(
+      (skill) => skillDecisions[skill.concept_uri] !== "declined",
+    );
+    const topJobs = currentProfile.occupation_paths;
+
+    return (
+      <section className="grid gap-5">
+        <div className="rounded-md border border-zinc-300 bg-white shadow-sm">
+          <div className="grid gap-4 px-4 py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
+                Your skill opportunities
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-normal text-zinc-950">
+                Opportunity paths from accepted skills
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
+                This view uses the accepted ESCO skills from the Skill Profile
+                to explain local opportunity routes and fitting ESCO jobs.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-md border-zinc-300 px-4"
+              onClick={() => setViewPhase("results")}
+            >
+              <Layers3 />
+              Back to Skill Profile
+            </Button>
+          </div>
+        </div>
+
         {renderOpportunityDashboard(acceptedSkills, topJobs)}
 
         <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
@@ -4033,7 +4212,7 @@ export function SearchClient({
               Best fitting ESCO jobs
             </h3>
             <p className="mt-1 text-sm leading-6 text-zinc-600">
-              Jobs are ranked by overlap between the final skill profile and
+              Jobs are ranked by overlap between the accepted skill profile and
               each occupation&apos;s ESCO skill requirements.
             </p>
           </div>
@@ -4171,56 +4350,6 @@ export function SearchClient({
             </ol>
           )}
         </section>
-
-        <section className="rounded-md border border-zinc-300 bg-white shadow-sm">
-          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-center">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
-                Export and actions
-              </p>
-              <h3 className="mt-1 text-xl font-semibold text-zinc-950">
-                Save or restart this Skill Profile
-              </h3>
-              <p className="mt-1 text-sm leading-6 text-zinc-600">
-                The machine-readable JSON keeps the ESCO skill IDs, job IDs,
-                score components, and metadata for reuse by another system.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <Button
-                type="button"
-                className="h-9 rounded-md bg-zinc-950 px-3 text-white hover:bg-cyan-800"
-                onClick={() => void copyProfileJson()}
-              >
-                Copy JSON
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 rounded-md border-zinc-300 px-3"
-                onClick={downloadProfileJson}
-              >
-                Download JSON
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 rounded-md border-zinc-300 px-3"
-                onClick={viewProfileJson}
-              >
-                View JSON
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 rounded-md border-zinc-300 px-3"
-                onClick={resetSurvey}
-              >
-                New profile
-              </Button>
-            </div>
-          </div>
-        </section>
       </section>
     );
   }
@@ -4251,10 +4380,13 @@ export function SearchClient({
         ) : (
           <>
             {viewPhase === "chat" ? renderProcessOverview("discover") : null}
-            {viewPhase === "results" && profile
+            {(viewPhase === "results" || viewPhase === "opportunities") && profile
               ? renderProcessOverview("review")
               : null}
             {viewPhase === "results" && profile ? renderResultsView(profile) : null}
+            {viewPhase === "opportunities" && profile
+              ? renderSkillOpportunitiesView(profile)
+              : null}
             {viewPhase === "loading" ? renderLoadingScreen() : null}
             {viewPhase === "chat" ? renderMiloChat() : null}
           </>
