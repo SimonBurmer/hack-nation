@@ -281,6 +281,25 @@ export function SearchClient({
     }
   }
 
+  function continueFromHere() {
+    if (isAnalyzingIntake || isGeneratingProfile) return;
+
+    const assistantMessage: ChatMessage = {
+      role: "assistant",
+      content:
+        "Got it. I will continue from here and build the profile with what we have.",
+    };
+    const nextMessages = [...profileMessages, assistantMessage];
+
+    setProfile(null);
+    setError("");
+    setProfileMessages(nextMessages);
+    setProfileStatus("Continuing with the information collected so far.");
+    setCalculationStage("collected");
+    setViewPhase("loading");
+    void generateProfile(nextMessages, surveyData, true);
+  }
+
   function loadAmaraDemo() {
     const cachedProfile = readCachedProfile(AMARA_DEMO_CACHE_KEY);
 
@@ -498,6 +517,7 @@ export function SearchClient({
                 profileStatus={profileStatus}
                 surveyData={surveyData}
                 surveyMissing={surveyMissing}
+                onContinueFromHere={continueFromHere}
                 onGenerateProfile={() => void generateProfile()}
                 onInputChange={setProfileInput}
                 onLoadDemo={loadAmaraDemo}

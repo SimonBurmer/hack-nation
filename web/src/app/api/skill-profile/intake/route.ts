@@ -14,9 +14,7 @@ type RequiredField =
   | "educational_level"
   | "favorite_skill"
   | "years_experience_total"
-  | "skill_confidence"
-  | "informal_experience"
-  | "demonstrated_competencies";
+  | "skill_confidence";
 
 type SurveyData = {
   age: number | null;
@@ -54,15 +52,13 @@ type IntakeResponse = SurveyData & {
 
 const requiredFieldLabels: Record<RequiredField, string> = {
   age: "age",
-  location: "location / country / region",
+  location: "country of residence",
   languages: "languages and levels",
   work_authorization: "work authorization",
   educational_level: "educational level",
   favorite_skill: "favorite or most fun skill",
   years_experience_total: "total years of experience",
   skill_confidence: "confidence in the main skills",
-  informal_experience: "informal experience",
-  demonstrated_competencies: "demonstrated competencies",
 };
 
 const emptySurveyData: SurveyData = {
@@ -133,7 +129,7 @@ const intakeSchema = {
       location: {
         type: "string",
         description:
-          "Country, region, city, or nearest location relevant for labor market, regulation, language, and remote work.",
+          "Country where the user currently lives. Prefer country over city or region.",
       },
       languages: {
         type: "array",
@@ -201,15 +197,13 @@ const intakeSchema = {
             "favorite_skill",
             "years_experience_total",
             "skill_confidence",
-            "informal_experience",
-            "demonstrated_competencies",
           ],
         },
       },
       assistant_message: {
         type: "string",
         description:
-          "Short chat response. Ask only for the most important missing information. If the user requested the result, acknowledge and say the analysis will use the available data.",
+          "Short conversational response, max 45 words. Reply to what the user just shared in a human way, then ask only the next most useful missing question. If the user requested the result, acknowledge and say the analysis will use the available data.",
       },
       user_requested_result: {
         type: "boolean",
@@ -379,10 +373,6 @@ function missingSurveyFields(data: SurveyData): RequiredField[] {
     !data.favorite_skill ? "favorite_skill" : "",
     !data.years_experience_total ? "years_experience_total" : "",
     !data.skill_confidence ? "skill_confidence" : "",
-    !data.informal_experience ? "informal_experience" : "",
-    data.demonstrated_competencies.length === 0
-      ? "demonstrated_competencies"
-      : "",
   ].filter(Boolean) as RequiredField[];
 }
 
@@ -394,7 +384,13 @@ function didUserRequestResult(value: string) {
   const message = value.toLowerCase();
 
   return (
-    /\b(go on|move on|proceed|carry on|continue|enough questions|no more questions|stop asking|stop the questions|skip the questions|just do it|use what you have|use current data|use the current data)\b/.test(
+    /\b(go on|move on|proceed|carry on|continue|enough questions|no more questions|stop asking|stop it|stop it now|stop question|stop questions|stop the question|stop the questions|skip question|skip questions|skip the question|skip the questions|just do it|use what you have|use current data|use the current data)\b/.test(
+      message,
+    ) ||
+    /\b(i\s+)?(do not|don't|dont|cannot|can't|cant|will not|won't|wont)\s+(want to\s+)?(answer|reply|respond)\b.{0,40}\b(anymore|any more|more|further|again|now)\b/.test(
+      message,
+    ) ||
+    /\b(i\s+)?(am done|i'm done|im done|done answering|finished answering)\b/.test(
       message,
     ) ||
     /\b(show|generate|create|build|start|finish|continue|use)\b.{0,40}\b(result|analysis|profile|now|anyway|current data)\b/.test(
@@ -420,8 +416,41 @@ function didUserRequestResult(value: string) {
   );
 }
 
-function formatMissingFields(fields: RequiredField[]) {
-  return fields.map((field) => requiredFieldLabels[field]).join(", ");
+function isControlOnlyResultRequest(value: string) {
+  const message = value.toLowerCase().replace(/[.!?]+$/g, "").trim();
+
+  return (
+    didUserRequestResult(message) &&
+    /^(please\s+)?(go on|move on|proceed|carry on|continue|enough questions|no more questions|stop asking|stop it|stop it now|stop question|stop questions|stop the question|stop the questions|skip question|skip questions|skip the question|skip the questions|just do it|use what you have|use current data|use the current data|show me the result|show the result|generate the result|create the profile|build the profile|finish|done|end chat|stop chat|i do not want to answer anymore|i don't want to answer anymore|i dont want to answer anymore|i do not want to answer any more|i don't want to answer any more|i dont want to answer any more|i cannot answer more|i can't answer more|i cant answer more|i am done|i'm done|im done|done answering|finished answering)(\s+please)?$/.test(
+      message,
+    )
+  );
+}
+
+function buildResultRequestResponse(data: SurveyData): IntakeResponse {
+  return {
+    ...data,
+    missing_fields: missingSurveyFields(data),
+    assistant_message:
+      "Got it. I will stop the questions and generate the result with the data we have.",
+    user_requested_result: true,
+    ready_to_generate: true,
+  };
+}
+
+function questionForMissingField(field: RequiredField) {
+  const questions: Record<RequiredField, string> = {
+    age: "To place the profile properly, how old are you?",
+    location: "So I can match the right opportunities, which country do you live in?",
+    languages: "What languages do you feel comfortable using, and roughly at what level?",
+    work_authorization: "For the work side, are you allowed to work where you live, or would you need permission or sponsorship?",
+    educational_level: "What is the highest level of education you have finished so far?",
+    favorite_skill: "Out of the things you can do, which skill do you actually enjoy using most?",
+    years_experience_total: "Roughly how long have you been building these skills?",
+    skill_confidence: "If 1 is beginner and 5 is very confident, where would you put your main skill?",
+  };
+
+  return questions[field];
 }
 
 function templateIndex(seed: string, length: number) {
@@ -431,18 +460,38 @@ function templateIndex(seed: string, length: number) {
 }
 
 function missingFieldMessage(fields: RequiredField[], seed: string) {
-  const selectedFields = fields.slice(0, 3);
-  const fieldText = formatMissingFields(selectedFields);
+  const field = fields[0];
+  const question = questionForMissingField(field);
   const templates = [
-    `Great, that helps. Could you tell me a bit more about ${fieldText}?`,
-    `Nice, I can work with that. Next, I need a little context on ${fieldText}.`,
-    `Good detail. To make the profile less generic, please add ${fieldText}.`,
-    `Got it. The next useful pieces are ${fieldText}; a short answer is totally fine.`,
-    `Perfect, we are getting there. Please explain more about ${fieldText}.`,
-    `Thanks. One more small batch before I map the skills: ${fieldText}.`,
+    `Got it, that helps. ${question}`,
+    `Nice, I can work with that. ${question}`,
+    `Thanks, that gives me a clearer picture. ${question}`,
+    `Good, we are getting there. ${question}`,
+    `That is useful context. ${question}`,
+    `Perfect, short answers are fine here. ${question}`,
   ];
 
-  return templates[templateIndex(`${seed}:${fieldText}`, templates.length)];
+  return templates[templateIndex(`${seed}:${field}`, templates.length)];
+}
+
+function compactAssistantMessage(value: unknown) {
+  const message = normalizeString(value);
+  if (!message) return "";
+
+  const words = message.split(/\s+/);
+  const shortened = words.length > 52 ? `${words.slice(0, 52).join(" ")}...` : message;
+
+  return shortened.length > 320 ? `${shortened.slice(0, 317).trim()}...` : shortened;
+}
+
+function shouldUseGeneratedAssistantMessage(
+  message: string,
+  readyToGenerate: boolean,
+) {
+  if (!message) return false;
+  if (readyToGenerate) return true;
+
+  return message.includes("?") && message.length <= 320;
 }
 
 function sanitizeIntakeResponse(
@@ -519,11 +568,20 @@ function sanitizeIntakeResponse(
   const missingFields = missingSurveyFields(data);
   const userRequestedResult = didUserRequestResult(latestMessage);
   const readyToGenerate = userRequestedResult || missingFields.length === 0;
-  const assistantMessage = readyToGenerate
+  const generatedAssistantMessage = compactAssistantMessage(
+    value.assistant_message,
+  );
+  const fallbackAssistantMessage = readyToGenerate
     ? userRequestedResult
       ? "Got it. I will stop the questions and generate the result with the data we have."
-      : "Great, I have the important context now. I am starting the skill analysis."
+      : "Great, I have enough to start. I am building your skill analysis now."
     : missingFieldMessage(missingFields, latestMessage);
+  const assistantMessage = shouldUseGeneratedAssistantMessage(
+    generatedAssistantMessage,
+    readyToGenerate,
+  )
+    ? generatedAssistantMessage
+    : fallbackAssistantMessage;
 
   return {
     ...data,
@@ -552,6 +610,10 @@ export async function POST(request: Request) {
     );
   }
 
+  if (isControlOnlyResultRequest(latestMessage)) {
+    return NextResponse.json(buildResultRequestResponse(currentData));
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
       { error: "Missing OPENAI_API_KEY in web/.env.local." },
@@ -563,12 +625,12 @@ export async function POST(request: Request) {
   const model = process.env.SKILL_PROFILE_MODEL || "gpt-4o-mini";
   const completion = await openai.chat.completions.create({
     model,
-    temperature: 0,
+    temperature: 0.2,
     messages: [
       {
         role: "system",
         content:
-          "You are the intake brain for a skill discovery engine. Your job is to classify every user input into the predefined dataset. Keep all existing collected data unless the newest user message clearly corrects it. Important required fields are: age; location/country/region; languages with level; work authorization; educational level; favorite or most fun skill; total years of experience; confidence in relevant skills; informal experience; demonstrated competencies. Optional fields should be captured when present: availability, work mode preference, target outcome, target roles, target industries, time horizon, priority tradeoff, current role title, current industry, domain years, seniority, team lead experience, key responsibilities, raw user-mentioned skills. Do not ask the user for normalized ESCO skill entries, ESCO URI, skill type, category, proficiency level, mapping confidence, evidence type, recency, frequency, or impact metrics as structured skill records; those are produced later by the skill discovery engine from the user's evidence. A city/place must not be copied into skills. A skill must not be copied into location. If one important field is missing and the user sends a single phrase, classify the phrase as that missing field when plausible. If the user says they want the result now, wants to go on, asks to stop the questions, or says to use current data, set user_requested_result and ready_to_generate true even if important fields are missing. If fields are missing, ask a short follow-up for only 1 to 3 missing important fields. Vary your wording and sound conversational, not like a checklist.",
+          "You are the intake brain for a skill discovery engine and you speak like Milo, a calm conversational guide. Your job is to classify every user input into the predefined dataset. Keep all existing collected data unless the newest user message clearly corrects it. Important required fields are: age; country where the user lives; languages with level; work authorization; educational level; favorite or most fun skill; total years of experience; confidence in relevant skills. Optional fields should be captured when present: informal experience, demonstrated competencies, availability, work mode preference, target outcome, target roles, target industries, time horizon, priority tradeoff, current role title, current industry, domain years, seniority, team lead experience, key responsibilities, raw user-mentioned skills. Store the user's country of residence in the location field. Do not ask for a city; if the user provides a city or region, infer the country only when it is obvious, otherwise ask which country they live in. Do not copy a city/place into skills. A skill must not be copied into location. If one important field is missing and the user sends a single phrase, classify the phrase as country only when it is clearly a country. If the user says they want the result now, wants to go on, asks to stop the questions, says something like stop it now, says they do not want to answer anymore, or says to use current data, set user_requested_result and ready_to_generate true even if important fields are missing. For assistant_message, sound like a real chat: briefly respond to what the user said, name or reflect one concrete detail when possible, then ask one natural follow-up for the next missing field. Keep it to one or two short sentences, do not list missing fields, and do not write a long explanation.",
       },
       {
         role: "user",
@@ -584,7 +646,7 @@ export async function POST(request: Request) {
               input:
                 "I am 27, in Hamburg Germany, German C1 and English B2, EU citizen, bachelor, 3 years, most fun skill is data analysis, confident in Python 4/5, helped friends build websites and built dashboards.",
               output_notes:
-                "age 27; location Hamburg Germany; languages German C1 and English B2; work_authorization EU citizen; educational_level bachelor; years_experience_total 3 years; favorite_skill data analysis; skill_confidence Python 4/5; informal_experience helped friends build websites; demonstrated_competencies built dashboards; skills include data analysis, Python, websites, dashboards.",
+                "age 27; location Germany; languages German C1 and English B2; work_authorization EU citizen; educational_level bachelor; years_experience_total 3 years; favorite_skill data analysis; skill_confidence Python 4/5; informal_experience helped friends build websites; demonstrated_competencies built dashboards; skills include data analysis, Python, websites, dashboards.",
             },
             {
               current: {
@@ -593,9 +655,9 @@ export async function POST(request: Request) {
                 languages: ["English B2"],
                 skills: ["computer science"],
               },
-              input: "Manu",
+              input: "Ghana",
               output_notes:
-                "Because location is missing and the answer is a single place-like phrase, classify Manu as location, not as a skill.",
+                "Because country is missing and the answer is a country, classify Ghana as location, not as a skill.",
             },
             {
               input: "Show me the result now",
@@ -614,7 +676,7 @@ export async function POST(request: Request) {
   const fallback: IntakeResponse = {
     ...currentData,
     missing_fields: missingSurveyFields(currentData),
-    assistant_message: "Thanks. I need one more detail before continuing.",
+    assistant_message: "Thanks, that helps. I need one more detail before continuing.",
     user_requested_result: false,
     ready_to_generate: missingSurveyFields(currentData).length === 0,
   };

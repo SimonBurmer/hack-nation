@@ -11,9 +11,7 @@ export type RequiredSurveyField =
   | "educational_level"
   | "favorite_skill"
   | "years_experience_total"
-  | "skill_confidence"
-  | "informal_experience"
-  | "demonstrated_competencies";
+  | "skill_confidence";
 
 export type SurveyData = {
   age: number | null;
