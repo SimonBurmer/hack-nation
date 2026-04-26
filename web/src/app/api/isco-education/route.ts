@@ -28,9 +28,8 @@ type EducationLevelTrend = {
 
 const eduCsvPath = path.resolve(
   process.cwd(),
-  "..",
-  "ESCO dataset - v1.2.1 - classification - en - csv",
-  "ISCO",
+  "data",
+  "isco",
   "EMP_TEMP_SEX_OCU_EDU_NB_A-filtered-2026-04-26.csv",
 );
 
