@@ -1,4 +1,5 @@
 # Analytical Dataplane for skill and opportunity discovery (SkillRoute)
+<img width="2873" height="1655" alt="grafik" src="https://github.com/user-attachments/assets/fbe216a1-340b-42ae-bdb9-d97df006f4a2" />
 
 SkillRoute is a hackathon prototype for converting informal, real-life
 experience into structured skill profiles and practical opportunity matches.
